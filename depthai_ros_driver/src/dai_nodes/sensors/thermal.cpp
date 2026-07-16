@@ -82,8 +82,9 @@ void Thermal::setupQueues(std::shared_ptr<dai::Device> device) {
         convConfig.tfPrefix = tfPrefix;
         convConfig.getBaseDeviceTimestamp = ph->getParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP);
         convConfig.updateROSBaseTimeOnRosMsg = ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG);
-        convConfig.lowBandwidth = ph->getParam<bool>(ParamNames::LOW_BANDWIDTH);
-        convConfig.encoding = dai::ImgFrame::Type::RGB888i;
+        // The raw temperature output is never routed through an encoder (see setInOut), so the converter
+        // must not attempt bitstream decoding even when the color topic uses low bandwidth.
+        convConfig.lowBandwidth = false;
         convConfig.addExposureOffset = ph->getParam<bool>(ParamNames::ADD_EXPOSURE_OFFSET);
         convConfig.expOffset = static_cast<dai::CameraExposureOffset>(ph->getParam<int>(ParamNames::EXPOSURE_OFFSET));
         convConfig.reverseSocketOrder = ph->getParam<bool>(ParamNames::REVERSE_STEREO_SOCKET_ORDER);
@@ -128,8 +129,10 @@ std::vector<std::shared_ptr<sensor_helpers::ImagePublisher>> Thermal::getPublish
 }
 
 void Thermal::updateParams(const std::vector<rclcpp::Parameter>& params) {
-    auto thermalConf = ph->setRuntimeParams(params);
-    confQ->send(thermalConf);
+    if(confQ) {
+        auto thermalConf = ph->setRuntimeParams(params);
+        confQ->send(thermalConf);
+    }
 }
 
 }  // namespace dai_nodes
