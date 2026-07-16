@@ -6,6 +6,7 @@
 #include "depthai_ros_driver_v3/dai_nodes/sensors/img_pub.hpp"
 #include "depthai_ros_driver_v3/dai_nodes/sensors/sensor_helpers.hpp"
 #include "depthai_ros_driver_v3/param_handlers/sync_param_handler.hpp"
+#include "rclcpp/utilities.hpp"
 
 namespace depthai_ros_driver {
 namespace dai_nodes {
@@ -30,6 +31,10 @@ void Sync::setInOut(std::shared_ptr<dai::Pipeline> /* pipeline */) {}
 void Sync::setupQueues(std::shared_ptr<dai::Device> /* device */) {
     outQueue = syncNode->out.createOutputQueue(8, false);
     outQueue->addCallback([this](const std::shared_ptr<dai::ADatatype>& in) {
+        // Runs on a device callback thread - publishing during shutdown throws, which would terminate.
+        if(!rclcpp::ok()) {
+            return;
+        }
         auto group = std::dynamic_pointer_cast<dai::MessageGroup>(in);
         if(group) {
             bool firstMsg = true;
@@ -61,7 +66,9 @@ dai::Node::Input& Sync::getInputByName(const std::string& name) {
 }
 
 void Sync::closeQueues() {
-    outQueue->close();
+    if(outQueue) {
+        outQueue->close();
+    }
 }
 
 void Sync::addPublishers(const std::vector<std::shared_ptr<sensor_helpers::ImagePublisher>>& pubs) {
