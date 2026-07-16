@@ -14,11 +14,13 @@ namespace depthai_ros_driver {
 
 Driver::Driver(const rclcpp::NodeOptions& options) : rclcpp::Node("driver", options) {
     //  Since we cannot use shared_from this before the object is initialized, we need to use a timer to start the device.
-    rclcpp::on_shutdown([this]() { stop(); }, options.context());
-    // to prevent starting multiple times when not using static executor
-    if(!starting) {
-        startTimer = this->create_wall_timer(std::chrono::seconds(1), [this]() {
-            starting = true;
+    // Keep the handle so the callback can be removed on destruction - otherwise a component unload followed by
+    // shutdown would invoke it on a dangling `this`.
+    rclContext = options.context();
+    shutdownCBHandle = rclContext->add_on_shutdown_callback([this]() { stop(); });
+    startTimer = this->create_wall_timer(std::chrono::seconds(1), [this]() {
+        // to prevent starting multiple times when not using static executor
+        if(!starting.exchange(true)) {
             start();
             srvGroup = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
@@ -55,13 +57,24 @@ Driver::Driver(const rclcpp::NodeOptions& options) : rclcpp::Node("driver", opti
                 this->create_subscription<diagnostic_msgs::msg::DiagnosticArray>("/diagnostics", 10, std::bind(&Driver::diagCB, this, std::placeholders::_1));
             RCLCPP_INFO(get_logger(), "Driver ready!");
             startTimer->cancel();
-        });
-    }
+        }
+    });
 }
+
+Driver::~Driver() {
+    if(rclContext) {
+        rclContext->remove_on_shutdown_callback(shutdownCBHandle);
+    }
+    stop();
+}
+
 void Driver::onConfigure() {
     ph = std::make_unique<param_handlers::DriverParamHandler>(shared_from_this(), "driver");
     ph->declareParams();
-    getDeviceType();
+    if(!getDeviceType()) {
+        RCLCPP_WARN(get_logger(), "Shutdown requested before a device was found, aborting startup.");
+        return;
+    }
     createPipeline();
     setupQueues();
     setIR();
@@ -91,9 +104,7 @@ void Driver::onConfigure() {
                                                               ph->getParam<bool>("i_rs_compat"));
     }
     pipeline->start();
-    RCLCPP_WARN(get_logger(),
-                "If you detect any issues with Kilted release, please report "
-                "issues to GH: https://github.com/luxonis/depthai-ros/issues/719");
+    RCLCPP_INFO(get_logger(), "If you detect any issues, please report them at https://github.com/luxonis/depthai-ros/issues");
 }
 
 void Driver::diagCB(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg) {
@@ -110,6 +121,11 @@ void Driver::diagCB(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg) 
 }
 
 void Driver::start() {
+    std::lock_guard<std::mutex> lock(lifecycleMtx);
+    startImpl();
+}
+
+void Driver::startImpl() {
     RCLCPP_INFO(this->get_logger(), "Starting driver.");
     if(!camRunning) {
         onConfigure();
@@ -119,11 +135,20 @@ void Driver::start() {
 }
 
 void Driver::stop() {
-    if(rclcpp::ok()) {
-        RCLCPP_INFO(get_logger(), "Stopping driver.");
-    }
+    std::lock_guard<std::mutex> lock(lifecycleMtx);
+    stopImpl();
+}
+
+void Driver::stopImpl() {
     if(camRunning) {
-        pipeline->stop();
+        if(rclcpp::ok()) {
+            RCLCPP_INFO(get_logger(), "Stopping driver.");
+        }
+        // camRunning is set before the pipeline exists (while connecting), so guard against
+        // stopping in that window (e.g. Ctrl-C while waiting for a device).
+        if(pipeline) {
+            pipeline->stop();
+        }
         generator.reset();
         camRunning = false;
         if(rclcpp::ok()) {
@@ -137,12 +162,11 @@ void Driver::stop() {
 }
 
 void Driver::restart() {
-    RCLCPP_ERROR(get_logger(), "Restarting driver");
-    stop();
-    start();
-    if(camRunning) {
-        return;
-    } else {
+    std::lock_guard<std::mutex> lock(lifecycleMtx);
+    RCLCPP_WARN(get_logger(), "Restarting driver");
+    stopImpl();
+    startImpl();
+    if(!camRunning) {
         RCLCPP_ERROR(get_logger(), "Restarting driver failed.");
     }
 }
@@ -162,8 +186,17 @@ void Driver::loadCalib(const std::string& path) {
 }
 
 void Driver::saveCalibCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response::SharedPtr res) {
-    saveCalib();
-    res->success = true;
+    try {
+        if(!device) {
+            throw std::runtime_error("Device is not connected.");
+        }
+        saveCalib();
+        res->success = true;
+    } catch(const std::exception& e) {
+        RCLCPP_ERROR(get_logger(), "Saving calibration failed: %s", e.what());
+        res->success = false;
+        res->message = e.what();
+    }
 }
 
 void Driver::savePipeline() {
@@ -176,20 +209,46 @@ void Driver::savePipeline() {
 }
 
 void Driver::savePipelineCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response::SharedPtr res) {
-    savePipeline();
-    res->success = true;
+    try {
+        if(!device || !pipeline) {
+            throw std::runtime_error("Pipeline is not running.");
+        }
+        savePipeline();
+        res->success = true;
+    } catch(const std::exception& e) {
+        RCLCPP_ERROR(get_logger(), "Saving pipeline failed: %s", e.what());
+        res->success = false;
+        res->message = e.what();
+    }
 }
 
 void Driver::startCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response::SharedPtr res) {
-    start();
-    res->success = true;
+    try {
+        start();
+        res->success = camRunning;
+        if(!camRunning) {
+            res->message = "Driver did not start, check logs for more information.";
+        }
+    } catch(const std::exception& e) {
+        RCLCPP_ERROR(get_logger(), "Starting driver failed: %s", e.what());
+        res->success = false;
+        res->message = e.what();
+    }
 }
 void Driver::stopCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response::SharedPtr res) {
-    stop();
-    res->success = true;
+    try {
+        stop();
+        res->success = true;
+    } catch(const std::exception& e) {
+        RCLCPP_ERROR(get_logger(), "Stopping driver failed: %s", e.what());
+        res->success = false;
+        res->message = e.what();
+    }
 }
-void Driver::getDeviceType() {
-    startDevice();
+bool Driver::getDeviceType() {
+    if(!startDevice()) {
+        return false;
+    }
     platform = device->getPlatform();
     auto boardID = device->readCalibration2().getEepromData().boardName;
     RCLCPP_DEBUG(get_logger(), "Board ID: %s", boardID.c_str());
@@ -208,6 +267,7 @@ void Driver::getDeviceType() {
             RCLCPP_DEBUG(get_logger(), "IR Drivers present");
         }
     }
+    return true;
 }
 
 void Driver::createPipeline() {
@@ -230,7 +290,7 @@ void Driver::createPipeline() {
 
 void Driver::setupQueues() {}
 
-void Driver::startDevice() {
+bool Driver::startDevice() {
     rclcpp::Rate r(1.0);
     while(rclcpp::ok() && !camRunning) {
         auto deviceId = ph->getParam<std::string>("i_device_id");
@@ -292,6 +352,11 @@ void Driver::startDevice() {
         r.sleep();
     }
 
+    // The loop above also exits when rclcpp shuts down (Ctrl-C) before a device was found - `device` is null then.
+    if(!camRunning || !device) {
+        return false;
+    }
+
     RCLCPP_INFO(get_logger(), "Driver with ID: %s and Name: %s connected!", device->getDeviceId().c_str(), device->getDeviceInfo().name.c_str());
     auto protocol = device->getDeviceInfo().getXLinkDeviceDesc().protocol;
 
@@ -303,6 +368,7 @@ void Driver::startDevice() {
                     "PoE device detected. Consider enabling low bandwidth for specific image topics (see "
                     "Readme->DepthAI ROS Driver->Specific device configurations).");
     }
+    return true;
 }
 
 void Driver::setIR() {
@@ -319,24 +385,36 @@ void Driver::setIR() {
 }
 
 rcl_interfaces::msg::SetParametersResult Driver::parameterCB(const std::vector<rclcpp::Parameter>& params) {
-    for(const auto& p : params) {
-        bool hasIR = true;
-        if(platform == dai::Platform::RVC2) {
-            hasIR = !device->getIrDrivers().empty();
-        }
-        if(ph->getParam<bool>("i_enable_ir") && hasIR) {
-            if(p.get_name() == ph->getFullParamName("r_laser_dot_intensity")) {
-                float laserdotIntensity = p.get_value<float>();
-                device->setIrLaserDotProjectorIntensity(laserdotIntensity);
-            } else if(p.get_name() == ph->getFullParamName("r_floodlight_intensity")) {
-                float floodlightIntensity = p.get_value<float>();
-                device->setIrFloodLightIntensity(floodlightIntensity);
-            }
-        }
-    }
-    generator->updateParams(params);
     rcl_interfaces::msg::SetParametersResult res;
     res.successful = true;
+    // When the driver is stopped (e.g. via ~/stop_driver), `generator` is reset. Accept the new values without
+    // applying them - they are picked up on the next start, which makes "stop -> set params -> start" work.
+    if(!camRunning || !device || !generator) {
+        RCLCPP_DEBUG(get_logger(), "Driver is not running, parameter changes will be applied on next start.");
+        return res;
+    }
+    try {
+        for(const auto& p : params) {
+            bool hasIR = true;
+            if(platform == dai::Platform::RVC2) {
+                hasIR = !device->getIrDrivers().empty();
+            }
+            if(ph->getParam<bool>("i_enable_ir") && hasIR) {
+                if(p.get_name() == ph->getFullParamName("r_laser_dot_intensity")) {
+                    float laserdotIntensity = p.get_value<float>();
+                    device->setIrLaserDotProjectorIntensity(laserdotIntensity);
+                } else if(p.get_name() == ph->getFullParamName("r_floodlight_intensity")) {
+                    float floodlightIntensity = p.get_value<float>();
+                    device->setIrFloodLightIntensity(floodlightIntensity);
+                }
+            }
+        }
+        generator->updateParams(params);
+    } catch(const std::exception& e) {
+        RCLCPP_ERROR(get_logger(), "Parameter update failed: %s", e.what());
+        res.successful = false;
+        res.reason = e.what();
+    }
     return res;
 }
 
