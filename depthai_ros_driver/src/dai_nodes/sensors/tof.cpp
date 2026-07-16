@@ -32,6 +32,8 @@ ToF::ToF(const std::string& daiNodeName,
     if(aligned) {
         alignNode = pipeline->create<dai::node::ImageAlign>();
         alignNode->setRunOnHost(ph->getParam<bool>("i_run_align_on_host"));
+        // Feed the depth frames into the align node; pipeline creation only links the align target (inputAlignTo).
+        tofNode->depth.link(alignNode->input);
         alignNode->input.setBlocking(false);
         alignNode->inputAlignTo.setBlocking(false);
         RCLCPP_DEBUG(getLogger(), "ToF is aligned, make sure to connect inputs/outputs in pipeline creation");

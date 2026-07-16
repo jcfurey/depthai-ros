@@ -215,6 +215,12 @@ std::vector<std::unique_ptr<dai_nodes::BaseNode>> DepthToF::createPipeline(std::
         tof->link(stereo->getInput(static_cast<int>(dai_nodes::link_types::StereoLinkType::align)));
     } else if(tof->isAligned() && tof->getAlignedSocketID() == stereo->getSocketID()) {
         stereo->link(tof->getInput(), static_cast<int>(dai_nodes::link_types::StereoLinkType::stereo));
+    } else if(tof->isAligned()) {
+        RCLCPP_WARN(node->get_logger(),
+                    "ToF alignment is enabled but tof.i_aligned_socket_id (%d) does not match the stereo socket (%d) - the aligned output will not produce "
+                    "frames.",
+                    static_cast<int>(tof->getAlignedSocketID()),
+                    static_cast<int>(stereo->getSocketID()));
     }
     addRgbdNode(daiNodes, node, device, pipeline, ph, rsCompat, *stereo->getLeftSensor(), *tof);
 
@@ -245,6 +251,11 @@ std::vector<std::unique_ptr<dai_nodes::BaseNode>> StereoToF::createPipeline(std:
         right->getDefaultOut()->link(tof->getInput());
     } else if(tof->isAligned() && tof->getAlignedSocketID() == left->getSocketID()) {
         left->getDefaultOut()->link(tof->getInput());
+    } else if(tof->isAligned()) {
+        RCLCPP_WARN(node->get_logger(),
+                    "ToF alignment is enabled but tof.i_aligned_socket_id (%d) matches neither left nor right sensor - the aligned output will not produce "
+                    "frames.",
+                    static_cast<int>(tof->getAlignedSocketID()));
     }
     if(checkForImu(ph, device, node->get_logger())) {
         auto imu = std::make_unique<dai_nodes::Imu>("imu", node, pipeline, device, rsCompat);
@@ -269,6 +280,11 @@ std::vector<std::unique_ptr<dai_nodes::BaseNode>> ToF::createPipeline(std::share
                                                                       const std::string& /*nnType*/) {
     std::vector<std::unique_ptr<dai_nodes::BaseNode>> daiNodes;
     auto tof = std::make_unique<dai_nodes::ToF>("tof", node, pipeline, deviceName, rsCompat);
+    if(tof->isAligned()) {
+        RCLCPP_WARN(node->get_logger(),
+                    "ToF alignment is enabled but the ToF pipeline type has no other sensor to align to - the aligned output will not produce frames. Use "
+                    "RGBTOF/STEREOTOF/DEPTHTOF instead.");
+    }
     daiNodes.push_back(std::move(tof));
     if(checkForImu(ph, device, node->get_logger())) {
         auto imu = std::make_unique<dai_nodes::Imu>("imu", node, pipeline, device, rsCompat);
@@ -289,6 +305,12 @@ std::vector<std::unique_ptr<dai_nodes::BaseNode>> RGBToF::createPipeline(std::sh
     addNnNode(daiNodes, node, pipeline, deviceName, rsCompat, *rgb, nnType);
     if(tof->isAligned() && tof->getAlignedSocketID() == rgb->getSocketID()) {
         rgb->getDefaultOut()->link(tof->getInput());
+    } else if(tof->isAligned()) {
+        RCLCPP_WARN(node->get_logger(),
+                    "ToF alignment is enabled but tof.i_aligned_socket_id (%d) does not match the color sensor (%d) - the aligned output will not produce "
+                    "frames.",
+                    static_cast<int>(tof->getAlignedSocketID()),
+                    static_cast<int>(rgb->getSocketID()));
     }
     addRgbdNode(daiNodes, node, device, pipeline, ph, rsCompat, *rgb, *tof);
     daiNodes.push_back(std::move(rgb));
