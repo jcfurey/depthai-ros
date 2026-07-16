@@ -28,6 +28,11 @@ void SysLogger::setInOut(std::shared_ptr<dai::Pipeline> /* pipeline */) {}
 
 void SysLogger::setupQueues(std::shared_ptr<dai::Device> device) {
     loggerQ = sysNode->out.createOutputQueue(8, false);
+    // Grace period so the first updater tick doesn't report ERROR before the 1 Hz logger produced a sample.
+    {
+        std::lock_guard<std::mutex> lock(sysInfoMtx);
+        setupTime = std::chrono::steady_clock::now();
+    }
     // Cache samples as they arrive; produceDiagnostics runs on the node's executor and must not block on the queue.
     loggerQ->addCallback([this](const std::shared_ptr<dai::ADatatype>& data) {
         if(auto sysInfo = std::dynamic_pointer_cast<dai::SystemInformation>(data)) {
@@ -72,12 +77,20 @@ std::string SysLogger::sysInfoToString(const dai::SystemInformation& sysInfo) {
 void SysLogger::produceDiagnostics(diagnostic_updater::DiagnosticStatusWrapper& stat) {
     try {
         std::shared_ptr<dai::SystemInformation> logData;
+        bool warmingUp = false;
         {
             std::lock_guard<std::mutex> lock(sysInfoMtx);
             constexpr auto staleAfter = std::chrono::seconds(5);
-            if(lastSysInfo && (std::chrono::steady_clock::now() - lastSysInfoTime) < staleAfter) {
+            auto now = std::chrono::steady_clock::now();
+            if(lastSysInfo && (now - lastSysInfoTime) < staleAfter) {
                 logData = lastSysInfo;
+            } else if(!lastSysInfo && (now - setupTime) < staleAfter) {
+                warmingUp = true;
             }
+        }
+        if(warmingUp) {
+            stat.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "Waiting for first sample");
+            return;
         }
         if(logData) {
             stat.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "System Information");

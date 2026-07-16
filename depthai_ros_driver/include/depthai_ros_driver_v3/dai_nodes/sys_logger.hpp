@@ -45,6 +45,7 @@ class SysLogger : public BaseNode {
     std::mutex sysInfoMtx;
     std::shared_ptr<dai::SystemInformation> lastSysInfo;
     std::chrono::steady_clock::time_point lastSysInfoTime;
+    std::chrono::steady_clock::time_point setupTime;
 };
 }  // namespace dai_nodes
 }  // namespace depthai_ros_driver
