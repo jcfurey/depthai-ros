@@ -64,7 +64,11 @@ void Segmentation::setInOut(std::shared_ptr<dai::Pipeline> /* pipeline */) {}
 
 void Segmentation::setupQueues(std::shared_ptr<dai::Device> device) {
     nnQ = segNode->out.createOutputQueue(ph->getParam<int>("i_max_q_size"), false);
+#ifdef DEPTHAI_ROS_IT_HAS_QOS_OVERLOAD
+    nnPub = image_transport::create_camera_publisher(*getROSNode(), "~/" + getName() + "/image_raw", rclcpp::QoS(10));
+#else
     nnPub = image_transport::create_camera_publisher(getROSNode().get(), "~/" + getName() + "/image_raw");
+#endif
     nnQ->addCallback(std::bind(&Segmentation::segmentationCB, this, std::placeholders::_1, std::placeholders::_2));
     if(ph->getParam<bool>("i_enable_passthrough")) {
         auto tfPrefix = getOpticalFrameName(getSocketName(ph->getSocketID()));
@@ -74,7 +78,11 @@ void Segmentation::setupQueues(std::shared_ptr<dai::Device> device) {
             getROSNode()->create_sub_node(std::string(getROSNode()->get_name()) + "/" + getName()).get(), "/" + getName());
         infoManager->setCameraInfo(sensor_helpers::getCalibInfo(getROSNode()->get_logger(), imageConverter, device->readCalibration(), ph->getSocketID()));
 
+#ifdef DEPTHAI_ROS_IT_HAS_QOS_OVERLOAD
+        ptPub = image_transport::create_camera_publisher(*getROSNode(), "~/" + getName() + "/passthrough/image_raw", rclcpp::QoS(10));
+#else
         ptPub = image_transport::create_camera_publisher(getROSNode().get(), "~/" + getName() + "/passthrough/image_raw");
+#endif
         ptQ->addCallback(std::bind(sensor_helpers::basicCameraPub, std::placeholders::_1, std::placeholders::_2, *imageConverter, ptPub, infoManager));
     }
 }

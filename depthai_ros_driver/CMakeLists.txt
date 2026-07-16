@@ -22,6 +22,13 @@ find_package(ament_cmake_auto REQUIRED)
 find_package(backward_ros REQUIRED)
 ament_auto_find_build_dependencies()
 
+# image_transport >= 6 (ROS lyrical) deprecates the rclcpp::Node* overload of
+# create_camera_publisher in favor of NodeInterfaces + rclcpp::QoS; 5.x and
+# older (jazzy/humble) have only the Node* + rmw_qos_profile_t overload.
+if(image_transport_VERSION VERSION_GREATER_EQUAL 6)
+  add_compile_definitions(DEPTHAI_ROS_IT_HAS_QOS_OVERLOAD)
+endif()
+
 include_directories(include)
 
 set(COMMON_LIB_NAME ${PROJECT_NAME}_common)

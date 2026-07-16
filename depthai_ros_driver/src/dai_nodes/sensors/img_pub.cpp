@@ -51,7 +51,12 @@ void ImagePublisher::setup(std::shared_ptr<dai::Device> device, const utils::Img
         infoPub =
             node->create_publisher<sensor_msgs::msg::CameraInfo>(pubConfig.topicName + pubConfig.infoSuffix + "/camera_info", rclcpp::QoS(10), pubOptions);
     } else {
+#ifdef DEPTHAI_ROS_IT_HAS_QOS_OVERLOAD
+        // image_transport >= 6 (lyrical) deprecates the rclcpp::Node* overload; QoS(10) matches the old default profile.
+        imgPubIT = image_transport::create_camera_publisher(*node, pubConfig.topicName + pubConfig.topicSuffix, rclcpp::QoS(10));
+#else
         imgPubIT = image_transport::create_camera_publisher(node.get(), pubConfig.topicName + pubConfig.topicSuffix);
+#endif
     }
     if(!synced) {
         if(encConfig.enabled) {

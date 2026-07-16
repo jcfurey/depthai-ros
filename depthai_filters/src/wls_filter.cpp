@@ -25,7 +25,12 @@ void WLSFilter::onInit() {
     filter->setSigmaColor(this->declare_parameter<double>("sigma_color", 1.5));
     maxDisparity = this->declare_parameter<double>("max_disparity", 760.0);
     paramCBHandle = this->add_on_set_parameters_callback(std::bind(&WLSFilter::parameterCB, this, std::placeholders::_1));
+#ifdef DEPTHAI_ROS_IT_HAS_QOS_OVERLOAD
+    // image_transport >= 6 (lyrical) deprecates the rclcpp::Node* overload; QoS(10) matches the old default profile.
+    depthPub = image_transport::create_camera_publisher(*this, "wls_filtered", rclcpp::QoS(10));
+#else
     depthPub = image_transport::create_camera_publisher(this, "wls_filtered");
+#endif
 }
 
 rcl_interfaces::msg::SetParametersResult WLSFilter::parameterCB(const std::vector<rclcpp::Parameter>& params) {
