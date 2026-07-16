@@ -1,0 +1,23 @@
+diff --git a/src/utility/Environment.hpp b/src/utility/Environment.hpp
+index 60c59720c..fb1178dab 100644
+--- a/src/utility/Environment.hpp
++++ b/src/utility/Environment.hpp
+@@ -5,6 +5,7 @@
+ #include <spdlog/logger.h>
+ #include <spdlog/spdlog.h>
+ 
++#include <algorithm>
+ #include <cstdlib>
+ #include <filesystem>
+ #include <mutex>
+diff --git a/src/utility/Logging.cpp b/src/utility/Logging.cpp
+index 3a2a2b204..4054b4229 100644
+--- a/src/utility/Logging.cpp
++++ b/src/utility/Logging.cpp
+@@ -1,5 +1,6 @@
+ #include "Logging.hpp"
+ 
++#include <algorithm>
+ #include "Environment.hpp"
+ 
+ namespace dai {

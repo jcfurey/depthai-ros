@@ -14,6 +14,7 @@ This branch builds from a single source tree on **humble**, **jazzy** and **lyri
 | `image_transport::create_camera_publisher` Node* overload deprecated (image_transport >= 6, lyrical) | `image_transport_VERSION` -> `DEPTHAI_ROS_IT_HAS_QOS_OVERLOAD` |
 | `geometry_msgs/Pose2D` removed (lyrical) | interfaces use `vision_msgs/Point2D` |
 | rosdep key `tar` resolves to `libtar-dev`, absent on lyrical's Ubuntu base | `rosdep install ... --skip-keys "tar"` |
+| depthai-core misses `#include <algorithm>` in two files, rejected by GCC 15 (lyrical) | `patches/depthai-core-gcc15-missing-algorithm.patch` (applied by the Dockerfile; apply manually for host builds until upstream ships it) |
 
 Packages are suffixed `_v3` (e.g. `depthai_ros_driver_v3`) so they can be installed alongside the apt-released v2 driver on humble/jazzy.
 

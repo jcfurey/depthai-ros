@@ -13,6 +13,10 @@ RUN sh -c "$(wget https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh
 ENV WS=/ws
 RUN mkdir -p $WS/src
 COPY ./ $WS/src/
+# depthai-core is missing #include <algorithm> in two files, which breaks
+# GCC 15 (lyrical); no-op once upstream ships the fix.
+RUN cd $WS/src/depthai-core && git apply --check ../patches/depthai-core-gcc15-missing-algorithm.patch 2>/dev/null \
+    && git apply ../patches/depthai-core-gcc15-missing-algorithm.patch || echo "depthai-core gcc15 patch already applied/not needed"
 # --skip-keys tar: the rosdep key resolves to libtar-dev, which newer Ubuntu
 # (lyrical/resolute) no longer ships; the build only needs the tar utility,
 # which is installed above.
