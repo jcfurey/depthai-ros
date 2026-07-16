@@ -1,3 +1,6 @@
+#include <chrono>
+#include <mutex>
+
 #include "depthai/pipeline/datatype/SystemInformation.hpp"
 #include "depthai_ros_driver_v3/dai_nodes/base_node.hpp"
 #include "diagnostic_updater/diagnostic_updater.hpp"
@@ -38,6 +41,10 @@ class SysLogger : public BaseNode {
     std::shared_ptr<dai::node::SystemLogger> sysNode;
     std::shared_ptr<dai::MessageQueue> loggerQ;
     std::string loggerQName;
+    // Latest sample cached from the queue callback so produceDiagnostics never blocks the executor.
+    std::mutex sysInfoMtx;
+    std::shared_ptr<dai::SystemInformation> lastSysInfo;
+    std::chrono::steady_clock::time_point lastSysInfoTime;
 };
 }  // namespace dai_nodes
 }  // namespace depthai_ros_driver

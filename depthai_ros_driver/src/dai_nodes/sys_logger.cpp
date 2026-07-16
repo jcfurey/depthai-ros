@@ -28,13 +28,23 @@ void SysLogger::setInOut(std::shared_ptr<dai::Pipeline> /* pipeline */) {}
 
 void SysLogger::setupQueues(std::shared_ptr<dai::Device> device) {
     loggerQ = sysNode->out.createOutputQueue(8, false);
+    // Cache samples as they arrive; produceDiagnostics runs on the node's executor and must not block on the queue.
+    loggerQ->addCallback([this](const std::shared_ptr<dai::ADatatype>& data) {
+        if(auto sysInfo = std::dynamic_pointer_cast<dai::SystemInformation>(data)) {
+            std::lock_guard<std::mutex> lock(sysInfoMtx);
+            lastSysInfo = sysInfo;
+            lastSysInfoTime = std::chrono::steady_clock::now();
+        }
+    });
     updater = std::make_shared<diagnostic_updater::Updater>(getROSNode());
     updater->setHardwareID(getROSNode()->get_fully_qualified_name() + std::string("_") + device->getDeviceId() + std::string("_") + device->getDeviceName());
     updater->add("sys_logger", std::bind(&SysLogger::produceDiagnostics, this, std::placeholders::_1));
 }
 
 void SysLogger::closeQueues() {
-    loggerQ->close();
+    if(loggerQ) {
+        loggerQ->close();
+    }
 }
 
 std::string SysLogger::sysInfoToString(const dai::SystemInformation& sysInfo) {
@@ -61,9 +71,15 @@ std::string SysLogger::sysInfoToString(const dai::SystemInformation& sysInfo) {
 
 void SysLogger::produceDiagnostics(diagnostic_updater::DiagnosticStatusWrapper& stat) {
     try {
-        bool timeout;
-        auto logData = loggerQ->get<dai::SystemInformation>(std::chrono::seconds(5), timeout);
-        if(!timeout) {
+        std::shared_ptr<dai::SystemInformation> logData;
+        {
+            std::lock_guard<std::mutex> lock(sysInfoMtx);
+            constexpr auto staleAfter = std::chrono::seconds(5);
+            if(lastSysInfo && (std::chrono::steady_clock::now() - lastSysInfoTime) < staleAfter) {
+                logData = lastSysInfo;
+            }
+        }
+        if(logData) {
             stat.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "System Information");
             const dai::SystemInformation& sysInfo = *logData;
             stat.add("Leon CSS CPU Usage", sysInfo.leonCssCpuUsage.average * 100);
@@ -85,7 +101,7 @@ void SysLogger::produceDiagnostics(diagnostic_updater::DiagnosticStatusWrapper& 
             stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "No Data");
         }
     } catch(const std::exception& e) {
-        RCLCPP_ERROR(getROSNode()->get_logger(), "No data on logger queue!");
+        RCLCPP_ERROR(getROSNode()->get_logger(), "Producing diagnostics failed: %s", e.what());
         stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, e.what());
     }
 }
