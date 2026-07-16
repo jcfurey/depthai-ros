@@ -22,6 +22,12 @@ if(image_transport_VERSION VERSION_GREATER_EQUAL 6)
   add_compile_definitions(DEPTHAI_ROS_IT_HAS_QOS_OVERLOAD)
 endif()
 
+# message_filters >= 6 replaces the Node* subscribe overload with
+# NodeInterfaces + a mandatory rclcpp::QoS (see message_filters_compat.hpp).
+if(message_filters_VERSION VERSION_GREATER_EQUAL 6)
+  add_compile_definitions(DEPTHAI_ROS_MF_NEEDS_QOS)
+endif()
+
 include_directories(include)
 ament_auto_add_library(
   ${PROJECT_NAME}
