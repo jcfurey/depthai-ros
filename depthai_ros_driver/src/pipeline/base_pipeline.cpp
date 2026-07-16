@@ -33,7 +33,7 @@ void BasePipeline::addRgbdNode(std::vector<std::unique_ptr<dai_nodes::BaseNode>>
                                dai_nodes::Stereo& stereo,
                                const std::string& name) {
     if(ph->getParam<bool>("i_enable_rgbd")) {
-        auto rgbd = std::make_unique<dai_nodes::RGBD>(name, node, pipeline, device, rsCompat, rgb, stereo.getUnderlyingNode(), stereo.isAligned());
+        auto rgbd = std::make_unique<dai_nodes::RGBD>(name, node, pipeline, device, rsCompat, rgb, stereo, stereo.isAligned());
         if(device->getPlatform() == dai::Platform::RVC4) {
             stereo.link(rgbd->getInput(static_cast<int>(dai_nodes::link_types::RGBDLinkType::depth)),
                         static_cast<int>(dai_nodes::link_types::StereoLinkType::stereo));

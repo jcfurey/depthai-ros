@@ -5,6 +5,8 @@
 #include "depthai/pipeline/Pipeline.hpp"
 #include "depthai/pipeline/node/Camera.hpp"
 #include "depthai/pipeline/node/ImageAlign.hpp"
+#include "depthai/pipeline/node/NeuralDepth.hpp"
+#include "depthai/pipeline/node/StereoDepth.hpp"
 #include "depthai/pipeline/node/host/RGBD.hpp"
 #include "depthai_bridge/PointCloudConverter.hpp"
 #include "depthai_ros_driver_v3/dai_nodes/sensors/stereo.hpp"
@@ -23,7 +25,7 @@ RGBD::RGBD(const std::string& daiNodeName,
            std::shared_ptr<dai::Device> device,
            bool rsCompat,
            SensorWrapper& camNode,
-           std::shared_ptr<dai::node::StereoDepth> stereo,
+           Stereo& stereoNode,
            bool aligned)
     : BaseNode(daiNodeName, node, pipeline, device->getDeviceName(), rsCompat) {
     using namespace param_handlers;
@@ -48,11 +50,19 @@ RGBD::RGBD(const std::string& daiNodeName,
                                      fps,
                                      true);
     out->link(rgbdNode->inColor);
+    auto stereo = stereoNode.getUnderlyingNode();
     if(platform == dai::Platform::RVC4) {
         if(!aligned) {
             align = pipeline->create<dai::node::ImageAlign>();
             align->setRunOnHost(ph->getParam<bool>("i_run_align_on_host"));
-            stereo->depth.link(align->input);
+            // With neural depth enabled there is no StereoDepth node - take the depth output from the neural node.
+            if(stereo) {
+                stereo->depth.link(align->input);
+            } else if(stereoNode.getNeuralDepthNode()) {
+                stereoNode.getNeuralDepthNode()->depth.link(align->input);
+            } else {
+                throw std::runtime_error("RGBD: stereo node has neither a StereoDepth nor a NeuralDepth node.");
+            }
             out->link(align->inputAlignTo);
             align->inputAlignTo.setBlocking(false);
             align->input.setBlocking(false);
@@ -61,6 +71,9 @@ RGBD::RGBD(const std::string& daiNodeName,
             RCLCPP_DEBUG(getLogger(), "Stereo depth output is reported to be aligned. Please connect its output externally");
         }
     } else {
+        if(!stereo) {
+            throw std::runtime_error("RGBD: neural depth is not supported on this platform.");
+        }
         if(!aligned) {
             out->link(stereo->inputAlignTo);
             stereo->inputAlignTo.setBlocking(false);
