@@ -46,8 +46,12 @@ SensorWrapper::SensorWrapper(const std::string& daiNodeName,
         sensorNode = std::make_unique<Camera>(daiNodeName, node, pipeline, deviceName, rsCompat, socket, publish);
     }
     if(ph->getParam<bool>("i_enable_feature_tracker")) {
-        featureTrackerNode = std::make_unique<FeatureTracker>(daiNodeName + std::string("_feature_tracker"), node, pipeline, deviceName, rsCompat);
-        sensorNode->link(featureTrackerNode->getInput());
+        if(sensorNode) {
+            featureTrackerNode = std::make_unique<FeatureTracker>(daiNodeName + std::string("_feature_tracker"), node, pipeline, deviceName, rsCompat);
+            sensorNode->link(featureTrackerNode->getInput());
+        } else {
+            RCLCPP_WARN(getLogger(), "Feature tracker requires the sensor node, which is disabled - skipping.");
+        }
     }
     if(ph->getParam<bool>("i_enable_nn")) {
         nnNode = std::make_unique<NNWrapper>(daiNodeName + std::string("_nn"), node, pipeline, deviceName, rsCompat, *this);
@@ -75,27 +79,28 @@ void SensorWrapper::setupQueues(std::shared_ptr<dai::Device> device) {
     if(ph->getParam<bool>("i_simulate_from_topic")) {
         // inQ = device->getInputQueue(inQName, ph->getParam<int>("i_max_q_size"), false);
     }
-    if(!ph->getParam<bool>("i_disable_node")) {
+    if(sensorNode && !ph->getParam<bool>("i_disable_node")) {
         sensorNode->setupQueues(device);
     }
-    if(ph->getParam<bool>("i_enable_feature_tracker")) {
+    if(featureTrackerNode) {
         featureTrackerNode->setupQueues(device);
     }
-    if(ph->getParam<bool>("i_enable_nn")) {
+    if(nnNode) {
         nnNode->setupQueues(device);
     }
 }
 void SensorWrapper::closeQueues() {
-    if(ph->getParam<bool>("i_simulate_from_topic")) {
+    // inQ is never created while simulate-from-topic is unavailable - guard all optional members.
+    if(inQ) {
         inQ->close();
     }
-    if(!ph->getParam<bool>("i_disable_node")) {
+    if(sensorNode && !ph->getParam<bool>("i_disable_node")) {
         sensorNode->closeQueues();
     }
-    if(ph->getParam<bool>("i_enable_feature_tracker")) {
+    if(featureTrackerNode) {
         featureTrackerNode->closeQueues();
     }
-    if(ph->getParam<bool>("i_enable_nn")) {
+    if(nnNode) {
         nnNode->closeQueues();
     }
 }
@@ -127,7 +132,9 @@ std::vector<std::shared_ptr<sensor_helpers::ImagePublisher>> SensorWrapper::getP
 }
 
 void SensorWrapper::updateParams(const std::vector<rclcpp::Parameter>& params) {
-    sensorNode->updateParams(params);
+    if(sensorNode) {
+        sensorNode->updateParams(params);
+    }
 }
 
 }  // namespace dai_nodes
