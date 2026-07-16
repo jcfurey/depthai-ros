@@ -1,0 +1,16 @@
+# Aligned ToF example (e.g. OAK-D-SR-PoE).
+# With i_aligned enabled the driver publishes the ImageAlign node's output
+# instead of the raw ToF depth; the topic's frame_id and camera_info then
+# match the align-target sensor (resolution included).
+/oak:
+  ros__parameters:
+    driver:
+      i_pipeline_type: RGBToF
+    tof:
+      i_aligned: true
+      # Socket to align depth to. 1 = CAM_B, the color sensor used by the
+      # RGBToF pipeline (default). Must match a sensor in the pipeline for
+      # alignment to be wired up.
+      # i_aligned_socket_id: 1
+      # Alignment runs on host by default; set false to run on device.
+      # i_run_align_on_host: true
