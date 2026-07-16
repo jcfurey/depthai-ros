@@ -105,7 +105,9 @@ void Vio::setupQueues(std::shared_ptr<dai::Device> /* device */) {
 }
 
 void Vio::closeQueues() {
-    transQ->close();
+    if(transQ) {
+        transQ->close();
+    }
 }
 
 void Vio::transCB(const std::string& /*name*/, const std::shared_ptr<dai::ADatatype>& data) {

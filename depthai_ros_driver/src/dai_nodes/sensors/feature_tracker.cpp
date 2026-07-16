@@ -49,7 +49,9 @@ void FeatureTracker::setupQueues(std::shared_ptr<dai::Device> /* device */) {
 }
 
 void FeatureTracker::closeQueues() {
-    featureQ->close();
+    if(featureQ) {
+        featureQ->close();
+    }
 }
 
 void FeatureTracker::featureQCB(const std::string& /*name*/, const std::shared_ptr<dai::ADatatype>& data) {
