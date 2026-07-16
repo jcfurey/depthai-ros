@@ -1,9 +1,7 @@
 #pragma once
 
+#include "depthai_filters/message_filters_compat.hpp"
 #include "depthai_ros_msgs_v3/msg/tracked_features.hpp"
-#include "message_filters/subscriber.h"
-#include "message_filters/sync_policies/approximate_time.h"
-#include "message_filters/synchronizer.h"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "sensor_msgs/msg/image.hpp"
