@@ -150,6 +150,10 @@ void Driver::stopImpl() {
             pipeline->stop();
         }
         generator.reset();
+        // Release the stopped objects - calls on a stopped pipeline (e.g. serializeToJson)
+        // crash inside depthai-core, so nothing may hold onto them past this point.
+        pipeline.reset();
+        device.reset();
         camRunning = false;
         if(rclcpp::ok()) {
             RCLCPP_INFO(get_logger(), "Driver stopped!");
@@ -187,8 +191,8 @@ void Driver::loadCalib(const std::string& path) {
 
 void Driver::saveCalibCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response::SharedPtr res) {
     try {
-        if(!device) {
-            throw std::runtime_error("Device is not connected.");
+        if(!camRunning || !device) {
+            throw std::runtime_error("Driver is not running.");
         }
         saveCalib();
         res->success = true;
@@ -210,8 +214,8 @@ void Driver::savePipeline() {
 
 void Driver::savePipelineCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response::SharedPtr res) {
     try {
-        if(!device || !pipeline) {
-            throw std::runtime_error("Pipeline is not running.");
+        if(!camRunning || !device || !pipeline) {
+            throw std::runtime_error("Driver is not running.");
         }
         savePipeline();
         res->success = true;
