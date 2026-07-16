@@ -118,12 +118,16 @@ class SpatialDetection : public BaseNode {
         }
     };
     void closeQueues() override {
-        nnQ->removeCallback(nnQCBID);
-        nnQ->close();
-        if(ph->getParam<bool>("i_enable_passthrough")) {
+        // The queues only exist after setupQueues (ptQ/ptDepthQ are currently never created at all -
+        // the passthrough queues live inside ptPub/ptDepthPub).
+        if(nnQ) {
+            nnQ->removeCallback(nnQCBID);
+            nnQ->close();
+        }
+        if(ptQ) {
             ptQ->close();
         }
-        if(ph->getParam<bool>("i_enable_passthrough_depth")) {
+        if(ptDepthQ) {
             ptDepthQ->close();
         }
     };

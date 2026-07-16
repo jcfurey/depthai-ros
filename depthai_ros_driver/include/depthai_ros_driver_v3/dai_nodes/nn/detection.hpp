@@ -132,8 +132,12 @@ class Detection : public BaseNode {
      * @brief      Closes the queues for the DetectionNetwork node and the passthrough.
      */
     void closeQueues() override {
-        nnQ->close();
-        if(ph->getParam<bool>("i_enable_passthrough")) {
+        // The destructor also calls this; the queues only exist after setupQueues (ptQ is currently never
+        // created at all - the passthrough queue lives inside ptPub).
+        if(nnQ) {
+            nnQ->close();
+        }
+        if(ptQ) {
             ptQ->close();
         }
     };
