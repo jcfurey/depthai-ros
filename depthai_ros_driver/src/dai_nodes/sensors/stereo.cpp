@@ -97,12 +97,11 @@ Stereo::Stereo(const std::string& daiNodeName,
             getName() + "_" + right->getName() + "_spatial_nn", getROSNode(), pipeline, device->getDeviceName(), rsCompat, *right, *this);
     }
     if(ph->getParam<bool>("i_enable_left_rgbd")) {
-        rgbdNodeLeft = std::make_unique<dai_nodes::RGBD>(
-            getName() + "_" + left->getName() + "_rgbd", node, pipeline, device, rsCompat, *left, getUnderlyingNode(), aligned);
+        rgbdNodeLeft = std::make_unique<dai_nodes::RGBD>(getName() + "_" + left->getName() + "_rgbd", node, pipeline, device, rsCompat, *left, *this, aligned);
     }
     if(ph->getParam<bool>("i_enable_right_rgbd")) {
-        rgbdNodeRight = std::make_unique<dai_nodes::RGBD>(
-            getName() + "_" + right->getName() + "_rgbd", node, pipeline, device, rsCompat, *right, getUnderlyingNode(), aligned);
+        rgbdNodeRight =
+            std::make_unique<dai_nodes::RGBD>(getName() + "_" + right->getName() + "_rgbd", node, pipeline, device, rsCompat, *right, *this, aligned);
     }
 
     // Check alignment, if board socket is one of the pairs, align.
@@ -475,7 +474,8 @@ int Stereo::getHeight() {
     return ph->getParam<int>(param_handlers::ParamNames::HEIGHT);
 }
 void Stereo::updateParams(const std::vector<rclcpp::Parameter>& params) {
-    if(ph->getParam<bool>("i_use_neural_depth")) {
+    // neuralControl only exists when the stereo topic is published (created in setupStereoQueue).
+    if(ph->getParam<bool>("i_use_neural_depth") && neuralControl) {
         auto ctrl = ph->setRuntimeParams(params);
         neuralControl->send(ctrl);
     }
