@@ -28,18 +28,23 @@ std_msgs::msg::Header BaseConverter::getRosHeader(const std::shared_ptr<dai::Buf
     }
     std_msgs::msg::Header header;
     header.frame_id = frameName;
-    std::chrono::_V2::steady_clock::time_point tstamp;
-    if(getBaseDeviceTimestamp)
-        if(addExpOffset) {
-            auto data = std::dynamic_pointer_cast<dai::ImgFrame>(inData);
-            tstamp = data->getTimestampDevice(offset);
-        } else
+    std::chrono::steady_clock::time_point tstamp;
+    // The exposure-offset overloads only exist on ImgFrame; other buffer types (e.g. EncodedFrame
+    // in low-bandwidth mode) fall back to the plain timestamp instead of dereferencing a failed cast.
+    auto imgFrame = addExpOffset ? std::dynamic_pointer_cast<dai::ImgFrame>(inData) : nullptr;
+    if(getBaseDeviceTimestamp) {
+        if(imgFrame) {
+            tstamp = imgFrame->getTimestampDevice(offset);
+        } else {
             tstamp = inData->getTimestampDevice();
-    else if(addExpOffset) {
-        auto data = std::dynamic_pointer_cast<dai::ImgFrame>(inData);
-        tstamp = data->getTimestamp(offset);
-    } else
-        tstamp = inData->getTimestamp();
+        }
+    } else {
+        if(imgFrame) {
+            tstamp = imgFrame->getTimestamp(offset);
+        } else {
+            tstamp = inData->getTimestamp();
+        }
+    }
     header.stamp = getFrameTime(rosBaseTime, steadyBaseTime, tstamp);
     return header;
 }
