@@ -132,11 +132,42 @@ ros2 run rqt_image_view rqt_image_view /oak/thermal/image_raw
 
 ## Viewing
 
+For live viewing from a source build, compile the SDK, bridge, and driver with
+optimization enabled. The SDK can default to `Debug` in a Git checkout, and an
+unset build type leaves the ROS packages unoptimized. From the workspace root,
+after building the dependencies, use:
+
+```bash
+colcon build --packages-select depthai depthai_bridge depthai_ros_driver \
+  --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+```
+
+`RelWithDebInfo` retains debug symbols while optimizing image conversion,
+point-cloud generation, and message processing. Re-source the workspace after
+building and restart the driver to load the rebuilt libraries.
+
 Launch RViz with the matching camera configuration:
 
 ```bash
 ros2 launch depthai_ros_driver driver.launch.py use_rviz:=true
 ```
+
+For responsive RGB, depth, and colored point clouds on an RVC2 OAK-D PoE, use
+the 640 x 400, 15 FPS viewing preset:
+
+```bash
+ros2 launch depthai_ros_driver driver.launch.py \
+  device_ip:=10.2.2.43 use_rviz:=true \
+  params_file:="$(ros2 pkg prefix depthai_ros_driver)/share/depthai_ros_driver/config/poe_rgbd_low_latency.yaml"
+```
+
+The preset enables point clouds. The SDK RGBD node transfers an additional raw
+color stream even when AUTO compresses the RGB image topic. Requesting more
+frames than the full pipeline can sustain causes old frames to accumulate;
+reducing both RGB and stereo source rates avoids that backlog. This preset
+retains the default image dimensions, stereo preset, and subpixel depth.
+Measure incoming message age as well as topic rate when tuning another camera
+or network; RViz rendering can add further delay.
 
 The launch file applies the resolved camera topics and camera base frame to RViz, so
 custom `name`, `namespace`, and `tf_prefix` values do not require editing the

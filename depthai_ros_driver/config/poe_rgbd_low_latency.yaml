@@ -1,0 +1,20 @@
+/**:
+  ros__parameters:
+    driver:
+      i_transport_profile: AUTO
+    pipeline_gen:
+      i_pipeline_type: RGBD
+      i_nn_type: none
+      i_enable_rgbd: true
+    rgb:
+      i_width: 640
+      i_height: 400
+      i_fps: 15.0
+    stereo:
+      i_width: 640
+      i_height: 400
+      i_fps: 15.0
+      i_depth_preset: FAST_ACCURACY
+    # RGBD also transfers raw color for the host point cloud. At 30 FPS this
+    # can back up the PoE pipeline even though the RGB image topic uses MJPEG.
+    # Keep source rates within the measured throughput to avoid stale frames.
