@@ -85,8 +85,30 @@ TEST_F(ImageConverterTest, ToRosMsgRawPtrTest) {
     EXPECT_EQ(outImageMsg.width, 640);
     EXPECT_EQ(outImageMsg.height, 480);
     EXPECT_EQ(outImageMsg.encoding, "bgr8");
+    EXPECT_FALSE(outImageMsg.is_bigendian);
     EXPECT_EQ(outImageMsg.step, 640 * 3);
     EXPECT_EQ(outImageMsg.data.size(), 640 * 480 * 3);
+}
+
+TEST_F(ImageConverterTest, ThermalYuv422UsesNativeDimensionsAndByteOrder) {
+    ImageConverter converter("thermal_frame", true, false);
+    auto inData = std::make_shared<dai::ImgFrame>();
+    inData->setWidth(256);
+    inData->setHeight(192);
+    inData->setStride(256 * 2);
+    inData->setType(dai::ImgFrame::Type::YUV422i);
+    inData->setData(std::vector<uint8_t>(256 * 192 * 2, 128));
+    sensor_msgs::msg::CameraInfo info;
+
+    auto outImageMsg = converter.toRosMsgRawPtr(inData, info);
+
+    EXPECT_EQ(outImageMsg.header.frame_id, "thermal_frame");
+    EXPECT_EQ(outImageMsg.width, 256);
+    EXPECT_EQ(outImageMsg.height, 192);
+    EXPECT_EQ(outImageMsg.encoding, "yuv422");
+    EXPECT_FALSE(outImageMsg.is_bigendian);
+    EXPECT_EQ(outImageMsg.step, 256 * 2);
+    EXPECT_EQ(outImageMsg.data.size(), 256 * 192 * 2);
 }
 
 TEST_F(ImageConverterTest, ToRosCompressedMsgTest) {

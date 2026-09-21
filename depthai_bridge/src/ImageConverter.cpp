@@ -196,10 +196,11 @@ ImageMsgs::Image ImageConverter::toRosMsgRawPtr(std::shared_ptr<dai::ImgFrame> i
             outImageMsg.width = inData->getWidth();
             outImageMsg.step = inData->getStride();
             ;
-            if(outImageMsg.encoding == "16UC1" || outImageMsg.encoding == "32FC1")
-                outImageMsg.is_bigendian = false;
-            else
-                outImageMsg.is_bigendian = true;
+            // DepthAI ImgFrame payloads use little-endian byte order. This is
+            // immaterial for 8-bit formats, but marking them big-endian makes
+            // cv_bridge attempt an unnecessary byte swap (and breaks YUV422
+            // conversion with current NumPy releases).
+            outImageMsg.is_bigendian = false;
 
             size_t size = inData->getData().size();
             outImageMsg.data.reserve(size);

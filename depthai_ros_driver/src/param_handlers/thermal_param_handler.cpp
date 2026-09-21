@@ -20,9 +20,10 @@ void ThermalParamHandler::declareParams(std::shared_ptr<dai::node::Thermal> ther
                         {"FLIP", dai::ThermalConfig::ThermalImageOrientation::Flip},
                         {"MIRROR_FLIP", dai::ThermalConfig::ThermalImageOrientation::MirrorFlip}};
     auto socketID = declareAndLogParam<int>(ParamNames::BOARD_SOCKET_ID, static_cast<int>(dai::CameraBoardSocket::CAM_E));
-    thermal->build(static_cast<dai::CameraBoardSocket>(socketID));
+    auto fps = declareAndLogParam<int>(ParamNames::FPS, 25);
+    thermal->build(static_cast<dai::CameraBoardSocket>(socketID), static_cast<float>(fps));
     declareAndLogParam<int>(ParamNames::WIDTH, 256);
-    declareAndLogParam<int>(ParamNames::HEIGHT, 162);
+    declareAndLogParam<int>(ParamNames::HEIGHT, 192);
     declareAndLogParam<bool>(ParamNames::PUBLISH_TOPIC, true);
     declareAndLogParam<bool>(ParamNames::ENABLE_NN, false);
     declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 8);
@@ -48,7 +49,6 @@ void ThermalParamHandler::declareParams(std::shared_ptr<dai::node::Thermal> ther
     thermalConfig->imageParams.brightnessLevel = declareAndLogParam<int>("r_brightness_level", 0, getRangedIntDescriptor(0, 255));
     thermalConfig->imageParams.orientation = utils::getValFromMap(declareAndLogParam<std::string>("i_orientation", "NORMAL"), thermalOrientMap);
     thermalConfig->imageParams.timeNoiseFilterLevel = declareAndLogParam<int>("r_time_noise_filter_level", 0, getRangedIntDescriptor(0, 3));
-    declareAndLogParam<int>(ParamNames::FPS, 30);
 }
 std::shared_ptr<dai::ThermalConfig> ThermalParamHandler::setRuntimeParams(const std::vector<rclcpp::Parameter>& params) {
     auto conf = std::make_shared<dai::ThermalConfig>();

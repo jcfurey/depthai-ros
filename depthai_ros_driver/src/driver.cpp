@@ -382,7 +382,11 @@ void Driver::configureTransportDefaults() {
 
     // Declare shared stream parameters early so the transport-aware default is
     // visible to all built-in pipelines. Explicit YAML/CLI overrides still win.
-    static const std::vector<std::string> streamNames = {"rgb", "color", "left", "right", "stereo", "depth", "infra1", "infra2", "tof", "thermal"};
+    // Thermal outputs are YUV422 and FP16 temperature frames. Neither format
+    // can be consumed directly by the RVC2 video encoder, so keep thermal
+    // transport raw while allowing the other streams (notably RGB on OAK-T)
+    // to use the constrained-link default.
+    static const std::vector<std::string> streamNames = {"rgb", "color", "left", "right", "stereo", "depth", "infra1", "infra2", "tof"};
     const auto& parameterOverrides = get_node_parameters_interface()->get_parameter_overrides();
     for(const auto& streamName : streamNames) {
         const auto parameterName = streamName + ".i_low_bandwidth";

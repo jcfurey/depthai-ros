@@ -30,6 +30,13 @@ def test_default_and_low_bandwidth_profiles_are_explicit():
     assert low_bandwidth["driver"]["i_transport_profile"] == "LOW_BANDWIDTH"
 
 
+def test_oak_t_keeps_native_thermal_formats_raw():
+    oak_t = yaml.safe_load(
+        (PACKAGE_ROOT / "config" / "oak_t.yaml").read_text(encoding="utf-8")
+    )["/**"]["ros__parameters"]
+    assert oak_t["thermal"]["i_low_bandwidth"] is False
+
+
 def test_launch_files_are_valid_python():
     for launch_file in sorted((PACKAGE_ROOT / "launch").glob("*.launch.py")):
         compile(

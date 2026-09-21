@@ -2,6 +2,7 @@
 #include "depthai_ros_driver/dai_nodes/sensors/thermal.hpp"
 
 #include <memory>
+#include <stdexcept>
 
 #include "depthai/device/Device.hpp"
 #include "depthai/pipeline/Pipeline.hpp"
@@ -33,15 +34,14 @@ void Thermal::setNames() {
 }
 
 void Thermal::setInOut(std::shared_ptr<dai::Pipeline> pipeline) {
+    using param_handlers::ParamNames;
+    if(ph->getParam<bool>(ParamNames::LOW_BANDWIDTH)) {
+        throw std::invalid_argument(
+            "thermal.i_low_bandwidth is unsupported: OAK-T emits YUV422 display frames and FP16 temperature frames, which cannot be encoded directly. "
+            "Keep thermal.i_low_bandwidth false; RGB can still use low-bandwidth transport.");
+    }
     if(ph->getParam<bool>("i_publish_topic")) {
-        utils::VideoEncoderConfig encConfig;
-        encConfig.profile = static_cast<dai::VideoEncoderProperties::Profile>(ph->getParam<int>("i_low_bandwidth_profile"));
-        encConfig.bitrate = ph->getParam<int>("i_low_bandwidth_bitrate");
-        encConfig.frameFreq = ph->getParam<int>("i_low_bandwidth_frame_freq");
-        encConfig.quality = ph->getParam<int>("i_low_bandwidth_quality");
-        encConfig.enabled = ph->getParam<bool>("i_low_bandwidth");
-
-        thermalPub = setupOutput(pipeline, thermalQName, &thermalNode->color, ph->getParam<bool>("i_synced"), encConfig);
+        thermalPub = setupOutput(pipeline, thermalQName, &thermalNode->color, ph->getParam<bool>("i_synced"));
     }
     if(ph->getParam<bool>("i_publish_raw")) {
         thermalRawPub = setupOutput(pipeline, rawQName, &thermalNode->temperature, ph->getParam<bool>("i_synced"));
@@ -56,8 +56,8 @@ void Thermal::setupQueues(std::shared_ptr<dai::Device> device) {
         convConfig.tfPrefix = tfPrefix;
         convConfig.getBaseDeviceTimestamp = ph->getParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP);
         convConfig.updateROSBaseTimeOnRosMsg = ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG);
-        convConfig.lowBandwidth = ph->getParam<bool>(ParamNames::LOW_BANDWIDTH);
-        convConfig.encoding = dai::ImgFrame::Type::RGB888i;
+        convConfig.lowBandwidth = false;
+        convConfig.encoding = dai::ImgFrame::Type::YUV422i;
         convConfig.addExposureOffset = ph->getParam<bool>(ParamNames::ADD_EXPOSURE_OFFSET);
         convConfig.expOffset = static_cast<dai::CameraExposureOffset>(ph->getParam<int>(ParamNames::EXPOSURE_OFFSET));
         convConfig.reverseSocketOrder = ph->getParam<bool>(ParamNames::REVERSE_STEREO_SOCKET_ORDER);
@@ -82,8 +82,8 @@ void Thermal::setupQueues(std::shared_ptr<dai::Device> device) {
         convConfig.tfPrefix = tfPrefix;
         convConfig.getBaseDeviceTimestamp = ph->getParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP);
         convConfig.updateROSBaseTimeOnRosMsg = ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG);
-        convConfig.lowBandwidth = ph->getParam<bool>(ParamNames::LOW_BANDWIDTH);
-        convConfig.encoding = dai::ImgFrame::Type::RGB888i;
+        convConfig.lowBandwidth = false;
+        convConfig.encoding = dai::ImgFrame::Type::GRAYF16;
         convConfig.addExposureOffset = ph->getParam<bool>(ParamNames::ADD_EXPOSURE_OFFSET);
         convConfig.expOffset = static_cast<dai::CameraExposureOffset>(ph->getParam<int>(ParamNames::EXPOSURE_OFFSET));
         convConfig.reverseSocketOrder = ph->getParam<bool>(ParamNames::REVERSE_STEREO_SOCKET_ORDER);

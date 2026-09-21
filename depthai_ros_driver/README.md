@@ -9,7 +9,8 @@ ros2 launch depthai_ros_driver driver.launch.py
 ```
 
 PoE cameras can be selected directly. `AUTO` chooses device-side image encoding
-for PoE and USB2 so RGB, depth, and IMU traffic do not compete for link bandwidth:
+for compatible PoE and USB2 image streams so camera traffic does not compete for
+link bandwidth:
 
 ```bash
 ros2 launch depthai_ros_driver driver.launch.py device_ip:=10.2.2.43
@@ -33,6 +34,29 @@ parameter in YAML overrides the global transport profile for that stream.
 The optional host-side ffmpeg image transport defaults to a one-frame GOP for
 low-latency viewing; tune `image_transport_ffmpeg_gop_size` when bandwidth is
 more important than seek/recovery latency.
+
+### RVC2 stereo low-bandwidth limitation
+
+With DepthAI 3.10, the RVC2 video encoder used by OAK-D PoE models does not
+accept the `StereoDepth` integer-disparity output (`ImgFrame` type 14/RAW8).
+If `AUTO` or `LOW_BANDWIDTH` enables `stereo.i_low_bandwidth`, the device logs
+the following warning repeatedly and `/oak/stereo/image_raw` remains silent:
+
+```text
+Arrived frame type (14) is not either NV12 or YUV400p (8-bit Gray)
+```
+
+Use raw transport for RGBD and point-cloud launches on affected RVC2 devices:
+
+```bash
+ros2 launch depthai_ros_driver rgbd_pcl.launch.py \
+  device_ip:=10.2.2.50 transport_profile:=RAW
+```
+
+To retain compressed RGB while publishing raw 16-bit depth, override only the
+stereo stream with `stereo.i_low_bandwidth:=false` in the parameter file. The
+verified raw output is `640 x 400`, `16UC1`; point-cloud and IMU publication
+continue normally.
 
 ## Configuration
 
@@ -66,6 +90,31 @@ ros2 topic list -t
 ros2 topic hz /oak/rgb/image_raw
 ros2 topic hz /oak/stereo/image_raw
 ros2 topic hz /oak/imu/data
+```
+
+## OAK Thermal
+
+Select an Ethernet OAK Thermal explicitly when other cameras share the network:
+
+```bash
+ros2 launch depthai_ros_driver oak_t.launch.py device_ip:=10.2.2.44
+```
+
+The native thermal outputs are 256 x 192 at a requested 25 FPS:
+
+- `/oak/thermal/image_raw`: YUV422 display image
+- `/oak/thermal/raw_data/image_raw`: `32FC1` temperature image in degrees Celsius
+- matching `camera_info` topics below each image namespace
+
+The launch also publishes `/oak/rgb/image_raw` and `/oak/imu/data` when those
+sensors are present. On PoE, `AUTO` compresses RGB but deliberately leaves both
+thermal products raw because the device video encoder does not accept their
+YUV422 and FP16 source formats. Do not set `thermal.i_low_bandwidth` to true.
+
+View the display image with the standard ROS viewer:
+
+```bash
+ros2 run rqt_image_view rqt_image_view /oak/thermal/image_raw
 ```
 
 ## Viewing

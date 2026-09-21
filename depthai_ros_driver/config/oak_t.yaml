@@ -5,3 +5,7 @@
     pipeline_gen:
       i_nn_type: none
       i_pipeline_type: Thermal
+    # OAK-T emits YUV422 display frames and FP16 temperature frames. Keep
+    # these native formats raw; AUTO can still compress the RGB stream on PoE.
+    thermal:
+      i_low_bandwidth: false
