@@ -14,6 +14,21 @@
 namespace depthai_ros_driver {
 namespace {
 
+// Post-set callbacks also run for our own defaults. Only user changes should
+// take a stream out of automatic transport management. Keep this per thread so
+// an unrelated parameter request cannot be mistaken for an internal update.
+thread_local const Driver* transportDefaultsOwner = nullptr;
+
+struct TransportDefaultsScope {
+    explicit TransportDefaultsScope(const Driver* driver) : previous(transportDefaultsOwner) {
+        transportDefaultsOwner = driver;
+    }
+    ~TransportDefaultsScope() {
+        transportDefaultsOwner = previous;
+    }
+    const Driver* previous;
+};
+
 bool isConnectableState(XLinkDeviceState_t state) {
     return state == X_LINK_ANY_STATE || state == X_LINK_UNBOOTED || state == X_LINK_BOOTLOADER || state == X_LINK_FLASH_BOOTED || state == X_LINK_GATE
            || state == X_LINK_GATE_SETUP;
@@ -26,6 +41,8 @@ bool isBootedState(XLinkDeviceState_t state) {
 }  // namespace
 
 Driver::Driver(const rclcpp::NodeOptions& options) : rclcpp::Node("oak", options) {
+    paramCBHandle = this->add_on_set_parameters_callback(std::bind(&Driver::parameterCB, this, std::placeholders::_1));
+    postParamCBHandle = this->add_post_set_parameters_callback(std::bind(&Driver::parametersAppliedCB, this, std::placeholders::_1));
     //  Since we cannot use shared_from this before the object is initialized, we need to use a timer to start the device.
     // Close DepthAI queues while ROS publishers and logging are still valid. Setting
     // shutdownRequested first also lets a pending device-discovery loop unwind.
@@ -54,7 +71,6 @@ Driver::Driver(const rclcpp::NodeOptions& options) : rclcpp::Node("oak", options
             }
             srvGroup = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
-            paramCBHandle = this->add_on_set_parameters_callback(std::bind(&Driver::parameterCB, this, std::placeholders::_1));
 #if RCLCPP_VERSION_MAJOR >= 28
             startSrv = this->create_service<Trigger>(
                 "~/start_driver", std::bind(&Driver::startCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
@@ -112,6 +128,7 @@ Driver::~Driver() {
 }
 
 void Driver::onConfigure() {
+    std::lock_guard<std::recursive_mutex> lock(lifecycleMtx);
     ph = std::make_unique<param_handlers::DriverParamHandler>(shared_from_this(), "driver");
     ph->declareParams();
     if(!getDeviceType()) {
@@ -162,6 +179,10 @@ void Driver::onConfigure() {
 }
 
 void Driver::diagCB(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg) {
+    std::lock_guard<std::recursive_mutex> lock(lifecycleMtx);
+    if(!ph || shutdownRequested) {
+        return;
+    }
     for(const auto& status : msg->status) {
         if(status.name == get_name() + std::string(": sys_logger")) {
             if(status.level == diagnostic_msgs::msg::DiagnosticStatus::ERROR) {
@@ -175,11 +196,14 @@ void Driver::diagCB(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg) 
 }
 
 void Driver::start() {
-    std::lock_guard<std::mutex> lock(lifecycleMtx);
+    std::lock_guard<std::recursive_mutex> lock(lifecycleMtx);
     startImpl();
 }
 
 void Driver::startImpl() {
+    if(shutdownRequested) {
+        return;
+    }
     RCLCPP_INFO(this->get_logger(), "Starting driver.");
     if(camRunning) {
         RCLCPP_INFO(this->get_logger(), "Driver is already running.");
@@ -194,7 +218,7 @@ void Driver::startImpl() {
 }
 
 void Driver::stop() {
-    std::lock_guard<std::mutex> lock(lifecycleMtx);
+    std::lock_guard<std::recursive_mutex> lock(lifecycleMtx);
     stopImpl();
 }
 
@@ -239,7 +263,7 @@ void Driver::stopImpl() {
 }
 
 void Driver::restart() {
-    std::lock_guard<std::mutex> lock(lifecycleMtx);
+    std::lock_guard<std::recursive_mutex> lock(lifecycleMtx);
     RCLCPP_WARN(get_logger(), "Restarting driver");
     stopImpl();
     startImpl();
@@ -263,6 +287,7 @@ void Driver::loadCalib(const std::string& path) {
 }
 
 void Driver::saveCalibCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response::SharedPtr res) {
+    std::lock_guard<std::recursive_mutex> lock(lifecycleMtx);
     try {
         if(!camRunning || !device) {
             throw std::runtime_error("Driver is not running.");
@@ -286,6 +311,7 @@ void Driver::savePipeline() {
 }
 
 void Driver::savePipelineCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response::SharedPtr res) {
+    std::lock_guard<std::recursive_mutex> lock(lifecycleMtx);
     try {
         if(!camRunning || !device || !pipeline) {
             throw std::runtime_error("Driver is not running.");
@@ -370,6 +396,7 @@ bool Driver::getDeviceType() {
 }
 
 void Driver::configureTransportDefaults() {
+    const TransportDefaultsScope updatingDefaults(this);
     const auto requestedProfile = utils::getUpperCaseStr(ph->getParam<std::string>("i_transport_profile"));
     bool lowBandwidth = false;
     if(requestedProfile == "AUTO") {
@@ -382,32 +409,45 @@ void Driver::configureTransportDefaults() {
 
     // Declare shared stream parameters early so the transport-aware default is
     // visible to all built-in pipelines. Explicit YAML/CLI overrides still win.
-    // Thermal outputs are YUV422 and FP16 temperature frames. Neither format
-    // can be consumed directly by the RVC2 video encoder, so keep thermal
-    // transport raw while allowing the other streams (notably RGB on OAK-T)
-    // to use the constrained-link default.
+    // RVC2 cannot encode StereoDepth RAW8 disparity directly. Thermal's YUV422
+    // and FP16 outputs and ToF's RAW16 depth also need to remain raw.
     static const std::vector<std::string> streamNames = {"rgb", "color", "left", "right", "stereo", "depth", "infra1", "infra2", "tof"};
     const auto& parameterOverrides = get_node_parameters_interface()->get_parameter_overrides();
     for(const auto& streamName : streamNames) {
         const auto parameterName = streamName + ".i_low_bandwidth";
+        const bool rawDepth = streamName == "tof" || (platform == dai::Platform::RVC2 && (streamName == "stereo" || streamName == "depth"));
+        const bool streamLowBandwidth = lowBandwidth && !rawDepth;
         if(!has_parameter(parameterName)) {
-            declare_parameter<bool>(parameterName, lowBandwidth);
+            declare_parameter<bool>(parameterName, streamLowBandwidth);
             if(parameterOverrides.count(parameterName) == 0) {
+                std::lock_guard<std::mutex> lock(transportParamsMtx);
                 transportManagedParams.insert(parameterName);
             }
-        } else if(transportManagedParams.count(parameterName) != 0) {
-            set_parameter(rclcpp::Parameter(parameterName, lowBandwidth));
+        } else {
+            bool managed;
+            {
+                std::lock_guard<std::mutex> lock(transportParamsMtx);
+                managed = transportManagedParams.count(parameterName) != 0;
+            }
+            if(managed) {
+                const auto result = set_parameter(rclcpp::Parameter(parameterName, streamLowBandwidth));
+                if(!result.successful) {
+                    throw std::runtime_error("Could not apply transport default for " + parameterName + ": " + result.reason);
+                }
+            }
         }
     }
 
     if(lowBandwidth) {
         RCLCPP_INFO(get_logger(),
-                    "Image transport profile: LOW_BANDWIDTH%s. Device-side encoding is the default for published image streams; explicit per-stream "
+                    "Image transport profile: LOW_BANDWIDTH%s. Device-side encoding is the default for compatible image streams; explicit per-stream "
                     "overrides still apply.",
                     requestedProfile == "AUTO" ? " (selected automatically for PoE/USB2)" : "");
-        RCLCPP_INFO(get_logger(),
-                    "When low-bandwidth encoding is applied to stereo, it uses integer disparity; select RAW or override stereo.i_low_bandwidth:=false if "
-                    "subpixel depth is required.");
+        if(platform == dai::Platform::RVC2) {
+            RCLCPP_INFO(get_logger(), "RVC2 stereo depth remains raw because its disparity format is not supported by the video encoder.");
+        } else {
+            RCLCPP_INFO(get_logger(), "Encoded stereo uses integer disparity; override stereo.i_low_bandwidth:=false for subpixel depth.");
+        }
     } else {
         RCLCPP_INFO(get_logger(), "Image transport profile: RAW%s.", requestedProfile == "AUTO" ? " (selected automatically for USB3)" : "");
         if(constrainedTransport) {
@@ -558,6 +598,14 @@ void Driver::setIR() {
 
 rcl_interfaces::msg::SetParametersResult Driver::parameterCB(const std::vector<rclcpp::Parameter>& params) {
     rcl_interfaces::msg::SetParametersResult res;
+    // ROS holds its parameter mutex here. Waiting for lifecycleMtx could
+    // deadlock against startup/teardown, which also reads ROS parameters.
+    std::unique_lock<std::recursive_mutex> lock(lifecycleMtx, std::try_to_lock);
+    if(!lock.owns_lock()) {
+        res.successful = false;
+        res.reason = "Driver lifecycle transition in progress; retry the parameter update.";
+        return res;
+    }
     res.successful = true;
     if(!camRunning || !device || !generator) {
         RCLCPP_DEBUG(get_logger(), "Driver is not running; parameter changes will be applied on next start.");
@@ -591,6 +639,19 @@ rcl_interfaces::msg::SetParametersResult Driver::parameterCB(const std::vector<r
         res.reason = e.what();
     }
     return res;
+}
+
+void Driver::parametersAppliedCB(const std::vector<rclcpp::Parameter>& params) {
+    if(transportDefaultsOwner == this) {
+        return;
+    }
+    // Track only committed changes, including an explicit value equal to the
+    // current default. Do not take lifecycleMtx while ROS holds its parameter
+    // mutex: startup may already be waiting for that mutex.
+    std::lock_guard<std::mutex> lock(transportParamsMtx);
+    for(const auto& param : params) {
+        transportManagedParams.erase(param.get_name());
+    }
 }
 
 }  // namespace depthai_ros_driver

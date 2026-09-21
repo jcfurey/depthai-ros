@@ -159,8 +159,13 @@ ament_export_include_directories(include/${PROJECT_NAME})
 
 install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
 if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
   find_package(ament_cmake_pytest REQUIRED)
+  ament_add_gtest(driver_lifecycle_test test/DriverLifecycleTest.cpp TIMEOUT 30)
+  target_link_libraries(driver_lifecycle_test ${PROJECT_NAME})
   ament_add_pytest_test(configuration_files test/test_configuration_files.py)
+  ament_add_pytest_test(launch_configuration test/test_launch_configuration.py
+    APPEND_ENV PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 if(BUILD_TESTING AND TEST_DEPTHAI_ROS_DRIVER)
   # Integration tests

@@ -28,9 +28,11 @@ Those single-camera launches also share `namespace`, `tf_prefix`, and
 `use_intra_process`, so moving a camera into a robot namespace does not require
 editing its YAML or wrapper launch file.
 
-`LOW_BANDWIDTH` uses integer disparity. Select `RAW` when subpixel depth is more
-important than constrained-link frame rate. A per-stream `i_low_bandwidth`
-parameter in YAML overrides the global transport profile for that stream.
+`LOW_BANDWIDTH` encodes compatible image streams. RVC2 stereo depth, ToF depth,
+and thermal outputs remain raw. On platforms that support encoded stereo, it
+uses integer disparity; select `RAW` when subpixel depth is required.
+A per-stream `i_low_bandwidth` parameter overrides the global transport profile
+for that stream. Overrides set at runtime are also preserved across restarts.
 The optional host-side ffmpeg image transport defaults to a one-frame GOP for
 low-latency viewing; tune `image_transport_ffmpeg_gop_size` when bandwidth is
 more important than seek/recovery latency.
@@ -39,24 +41,20 @@ more important than seek/recovery latency.
 
 With DepthAI 3.10, the RVC2 video encoder used by OAK-D PoE models does not
 accept the `StereoDepth` integer-disparity output (`ImgFrame` type 14/RAW8).
-If `AUTO` or `LOW_BANDWIDTH` enables `stereo.i_low_bandwidth`, the device logs
-the following warning repeatedly and `/oak/stereo/image_raw` remains silent:
+`AUTO` and `LOW_BANDWIDTH` therefore keep RVC2 stereo depth raw while encoding
+compatible streams such as RGB. Explicitly setting `stereo.i_low_bandwidth`
+(or `depth.i_low_bandwidth` in RealSense mode) to true on RVC2 is rejected at
+startup with an explanatory error instead of silently dropping depth frames.
+The shipped low-bandwidth configuration follows the same defaults.
 
-```text
-Arrived frame type (14) is not either NV12 or YUV400p (8-bit Gray)
-```
-
-Use raw transport for RGBD and point-cloud launches on affected RVC2 devices:
+Select `RAW` to keep all image streams raw:
 
 ```bash
 ros2 launch depthai_ros_driver rgbd_pcl.launch.py \
   device_ip:=10.2.2.50 transport_profile:=RAW
 ```
 
-To retain compressed RGB while publishing raw 16-bit depth, override only the
-stereo stream with `stereo.i_low_bandwidth:=false` in the parameter file. The
-verified raw output is `640 x 400`, `16UC1`; point-cloud and IMU publication
-continue normally.
+The raw depth output retains its 16-bit format and subpixel configuration.
 
 ## Configuration
 
@@ -125,10 +123,17 @@ Launch RViz with the matching camera configuration:
 ros2 launch depthai_ros_driver driver.launch.py use_rviz:=true
 ```
 
-The launch file applies the resolved camera topics and TF prefix to RViz, so
+The launch file applies the resolved camera topics and camera base frame to RViz, so
 custom `name`, `namespace`, and `tf_prefix` values do not require editing the
 RViz file. Wrappers consistently expose `rviz_config` and `rviz_fixed_frame`;
-VIO defaults the latter to `odom`.
+VIO defaults the latter to `odom`. Otherwise, the fixed frame defaults to `name`,
+even when a different `tf_prefix` is used for the sensor frames.
+
+## Stereo input from rosbags
+
+`stereo_from_rosbag.launch.py` is disabled until ROS image input queues are
+implemented. It reports an error before starting a camera or bag playback.
+Setting a sensor's `i_simulate_from_topic` directly is also rejected.
 
 ## Runtime control and shutdown
 
@@ -142,3 +147,7 @@ ros2 service call /oak/start std_srvs/srv/Trigger '{}'
 The legacy `/oak/stop_driver` and `/oak/start_driver` names remain available.
 Ctrl-C performs the same orderly queue and pipeline teardown automatically; a
 manual stop call is not required.
+
+Parameter changes during startup, stop, or restart are rejected with a retry
+message. Save-pipeline and save-calibration requests wait for an active lifecycle
+operation to finish, then report an error if the driver is stopped.

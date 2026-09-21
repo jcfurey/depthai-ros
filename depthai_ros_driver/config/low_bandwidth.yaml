@@ -8,5 +8,4 @@
       i_low_bandwidth: true
     right:
       i_low_bandwidth: true
-    stereo:
-      i_low_bandwidth: true
+    # The driver keeps RVC2 stereo raw because RAW8 disparity cannot be encoded.

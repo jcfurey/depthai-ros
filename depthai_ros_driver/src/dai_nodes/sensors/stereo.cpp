@@ -159,6 +159,11 @@ bool Stereo::isAligned() {
 void Stereo::setInOut(std::shared_ptr<dai::Pipeline> pipeline) {
     bool outputDisparity = ph->getParam<bool>("i_output_disparity");
     bool lowBandwidth = ph->getParam<bool>("i_low_bandwidth");
+    if(lowBandwidth && platform == dai::Platform::RVC2) {
+        throw std::invalid_argument(getName()
+                                    + ".i_low_bandwidth is unsupported on RVC2: the video encoder cannot consume RAW8 disparity directly. "
+                                      "Set it to false; RGB can still use low-bandwidth transport.");
+    }
     if(ph->getParam<bool>("i_publish_topic")) {
         utils::VideoEncoderConfig encConf;
         encConf.profile = static_cast<dai::VideoEncoderProperties::Profile>(ph->getParam<int>("i_low_bandwidth_profile"));

@@ -34,6 +34,7 @@ class Driver : public rclcpp::Node {
     void onConfigure();
 
    private:
+    friend class DriverTestAccess;
     /**
      * @brief      Print information about the device type.
      * @return     false if shutdown was requested before a device was found.
@@ -72,7 +73,9 @@ class Driver : public rclcpp::Node {
      */
     void loadCalib(const std::string& path);
     rcl_interfaces::msg::SetParametersResult parameterCB(const std::vector<rclcpp::Parameter>& params);
+    void parametersAppliedCB(const std::vector<rclcpp::Parameter>& params);
     OnSetParametersCallbackHandle::SharedPtr paramCBHandle;
+    PostSetParametersCallbackHandle::SharedPtr postParamCBHandle;
     std::unique_ptr<param_handlers::DriverParamHandler> ph;
     rclcpp::Service<Trigger>::SharedPtr startSrv, stopSrv, startAliasSrv, stopAliasSrv, savePipelineSrv, saveCalibSrv;
     rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagSub;
@@ -104,11 +107,14 @@ class Driver : public rclcpp::Node {
     std::atomic<bool> starting = false;
     std::atomic<bool> shutdownRequested = false;
     bool constrainedTransport = false;
+    // Never hold this mutex while calling the ROS parameter API.
+    std::mutex transportParamsMtx;
     std::unordered_set<std::string> transportManagedParams;
     std::unique_ptr<depthai_bridge::TFPublisher> tfPub;
     rclcpp::TimerBase::SharedPtr startTimer;
     rclcpp::CallbackGroup::SharedPtr srvGroup;
-    std::mutex lifecycleMtx;
+    // Startup declares/sets parameters synchronously, re-entering parameterCB.
+    std::recursive_mutex lifecycleMtx;
     rclcpp::Context::SharedPtr rclContext;
     rclcpp::PreShutdownCallbackHandle preShutdownCBHandle;
 };

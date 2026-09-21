@@ -28,6 +28,8 @@ def test_default_and_low_bandwidth_profiles_are_explicit():
         )
     )["/**"]["ros__parameters"]
     assert low_bandwidth["driver"]["i_transport_profile"] == "LOW_BANDWIDTH"
+    # Allow the driver to select a format supported by the connected platform.
+    assert "i_low_bandwidth" not in low_bandwidth.get("stereo", {})
 
 
 def test_oak_t_keeps_native_thermal_formats_raw():

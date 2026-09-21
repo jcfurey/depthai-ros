@@ -78,7 +78,9 @@
 			<xacro:property name="imu_y" value="0.0" />
 		</xacro:if>
 
-		<xacro:if value="${model == 'OAK-D-PRO'}">
+		<!-- Preserve the IMU offsets previously selected by the driver's PRO
+		     model aliases, while keeping each camera's own mesh. -->
+		<xacro:if value="${model in ['OAK-D-PRO', 'OAK-D-PRO-W', 'OAK-D-S2', 'OAK-D-LITE']}">
 			<xacro:property name="imu_offset_x" value="-0.008" />
 			<xacro:property name="imu_offset_y" value="-0.037945" />
 			<xacro:property name="imu_offset_z" value="-0.00079" />

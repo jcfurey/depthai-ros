@@ -201,7 +201,7 @@ def launch_setup(context, *args, **kwargs):
         else f"{namespace_root}/{points_topic_name}"
     )
     rviz_fixed_frame = LaunchConfiguration("rviz_fixed_frame").perform(context)
-    rviz_fixed_frame = rviz_fixed_frame.strip("/") or tf_prefix
+    rviz_fixed_frame = rviz_fixed_frame.strip("/") or name
     rviz_remappings = [
         (f"/oak/{suffix}", f"{camera_root}/{suffix}")
         for suffix in (
@@ -312,7 +312,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "rviz_fixed_frame",
             default_value="",
-            description="RViz fixed frame. Empty uses tf_prefix/name.",
+            description="RViz fixed frame. Empty uses the camera base frame (name).",
         ),
         DeclareLaunchArgument(
             "rviz_config",

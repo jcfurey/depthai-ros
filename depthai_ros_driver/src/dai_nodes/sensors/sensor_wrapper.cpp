@@ -1,5 +1,7 @@
 #include "depthai_ros_driver/dai_nodes/sensors/sensor_wrapper.hpp"
 
+#include <stdexcept>
+
 #include "depthai/device/Device.hpp"
 #include "depthai/pipeline/Pipeline.hpp"
 #include "depthai_bridge/ImageConverter.hpp"
@@ -25,14 +27,7 @@ SensorWrapper::SensorWrapper(const std::string& daiNodeName,
     ph = std::make_unique<param_handlers::SensorParamHandler>(node, daiNodeName, deviceName, rsCompat, socket);
 
     if(ph->getParam<bool>("i_simulate_from_topic")) {
-        std::string topicName = ph->getParam<std::string>("i_simulated_topic_name");
-        if(topicName.empty()) {
-            topicName = "~/" + getName() + "/input";
-        }
-        sub = node->create_subscription<sensor_msgs::msg::Image>(topicName, 10, std::bind(&SensorWrapper::subCB, this, std::placeholders::_1));
-        converter = std::make_unique<depthai_bridge::ImageConverter>("sub", true);
-        setNames();
-        setInOut(pipeline);
+        throw std::invalid_argument(getName() + ".i_simulate_from_topic is unsupported: stereo input from ROS topics/rosbags is not implemented.");
     }
 
     socketID = ph->getSocketID();
