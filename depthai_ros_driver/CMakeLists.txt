@@ -109,7 +109,7 @@ target_link_libraries(
 add_library(
   ${PROJECT_NAME} SHARED
   src/driver.cpp src/pipeline/pipeline_generator.cpp
-  src/pipeline/base_pipeline.cpp src/pipeline/base_types.cpp)
+  src/pipeline/base_pipeline.cpp)
 
 target_link_libraries(
   ${PROJECT_NAME}
@@ -121,19 +121,29 @@ target_link_libraries(
   ${rclcpp_components_TARGETS}
   ${std_srvs_TARGETS}
   ${pluginlib_TARGETS})
+
+# Keep pipeline plugin registrations out of the driver component library.
+# Loading a component which then asks pluginlib to reload that same library
+# makes the factories invisible to the nested class loader on newer ROS 2
+# releases.
+set(PIPELINE_PLUGIN_LIB_NAME ${PROJECT_NAME}_pipeline_plugins)
+add_library(${PIPELINE_PLUGIN_LIB_NAME} SHARED src/pipeline/base_types.cpp)
+target_link_libraries(${PIPELINE_PLUGIN_LIB_NAME} PUBLIC ${PROJECT_NAME})
+
 rclcpp_components_register_node(${PROJECT_NAME} PLUGIN
   "${PROJECT_NAME}::Driver" EXECUTABLE driver)
 pluginlib_export_plugin_description_file(${PROJECT_NAME} plugins.xml)
 
 ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
-ament_export_libraries(${PROJECT_NAME})
+ament_export_libraries(${PROJECT_NAME} ${PIPELINE_PLUGIN_LIB_NAME})
 ament_export_dependencies(camera_info_manager cv_bridge depthai_bridge depthai
   diagnostic_updater std_srvs)
 
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
 
 install(
-  TARGETS ${PROJECT_NAME} ${SENSOR_LIB_NAME} ${NN_LIB_NAME} ${COMMON_LIB_NAME}
+  TARGETS ${PROJECT_NAME} ${PIPELINE_PLUGIN_LIB_NAME} ${SENSOR_LIB_NAME}
+          ${NN_LIB_NAME} ${COMMON_LIB_NAME}
   EXPORT ${PROJECT_NAME}Targets
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
