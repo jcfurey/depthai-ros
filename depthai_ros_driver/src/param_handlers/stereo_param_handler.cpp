@@ -218,9 +218,11 @@ dai::DeviceModelZoo StereoParamHandler::getModel() {
 void StereoParamHandler::declareParams(std::shared_ptr<dai::node::NeuralDepth> neuralDepth) {
     model = utils::getValFromMap(declareAndLogParam<std::string>("i_neural_depth_model", "NEURAL_DEPTH_SMALL"), neuralModelTypeMap);
     auto currentConfig = neuralDepth->initialConfig;
-    currentConfig->setConfidenceThreshold(declareAndLogParam<int>("r_confidence_threshold", currentConfig->getConfidenceThreshold()));
-    currentConfig->setEdgeThreshold(declareAndLogParam<int>("r_edge_threshold", currentConfig->getEdgeThreshold()));
+    currentConfig->setConfidenceThreshold(
+        declareAndLogParam<int>("r_confidence_threshold", currentConfig->getConfidenceThreshold(), getRangedIntDescriptor(0, 255)));
+    currentConfig->setEdgeThreshold(declareAndLogParam<int>("r_edge_threshold", currentConfig->getEdgeThreshold(), getRangedIntDescriptor(0, 255)));
     neuralDepth->initialConfig = currentConfig;
+    neuralConfig = currentConfig;
 
     auto size = neuralDepth->getInputSize(model);
     declareAndLogParam<int>(ParamNames::WIDTH, size.first);
@@ -228,19 +230,17 @@ void StereoParamHandler::declareParams(std::shared_ptr<dai::node::NeuralDepth> n
     declareAndLogParam<bool>("i_enable_alpha_scaling", false);
 }
 std::shared_ptr<dai::NeuralDepthConfig> StereoParamHandler::setRuntimeParams(const std::vector<rclcpp::Parameter>& params) {
-    auto cfg = std::make_shared<dai::NeuralDepthConfig>();
-    for(const auto& p : params) {
-        if(p.get_name() == getFullParamName("r_confidence_threshold")) {
-            if(p.get_value<int>()) {
-                cfg->setConfidenceThreshold(p.get_value<int>());
-            }
-        }
-        if(p.get_name() == getFullParamName("r_edge_threshold")) {
-            if(p.get_value<int>()) {
-                cfg->setEdgeThreshold(p.get_value<int>());
-            }
-        }
+    if(!hasUpdatedParam(params, {"r_confidence_threshold", "r_edge_threshold"})) {
+        return nullptr;
     }
+    auto cfg = std::make_shared<dai::NeuralDepthConfig>(*neuralConfig);
+    const int confidence = getUpdatedParam<int>("r_confidence_threshold", params);
+    const int edge = getUpdatedParam<int>("r_edge_threshold", params);
+    if(confidence < 0 || confidence > 255 || edge < 0 || edge > 255) {
+        throw std::invalid_argument("Neural depth thresholds must be between 0 and 255.");
+    }
+    cfg->setConfidenceThreshold(confidence);
+    cfg->setEdgeThreshold(edge);
     return cfg;
 }
 

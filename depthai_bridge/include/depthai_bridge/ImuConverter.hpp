@@ -24,6 +24,7 @@ enum class ImuSyncMethod { COPY, LINEAR_INTERPOLATE_GYRO, LINEAR_INTERPOLATE_ACC
 
 class ImuConverter : public BaseConverter {
    public:
+    // magnetic_field_cov is the ROS magnetic-field variance in tesla squared.
     explicit ImuConverter(const std::string& frameName,
                           ImuSyncMethod syncMode = ImuSyncMethod::COPY,
                           double linear_accel_cov = 0.0,

@@ -49,6 +49,7 @@ class Sync : public BaseNode {
     std::shared_ptr<dai::node::Sync> syncNode;
     std::string syncOutputName;
     std::shared_ptr<dai::MessageQueue> outQueue;
+    int cbID = -1;
     void publishOutputs();
     std::vector<std::shared_ptr<sensor_helpers::ImagePublisher>> publishers;
     std::vector<std::string> syncNames;

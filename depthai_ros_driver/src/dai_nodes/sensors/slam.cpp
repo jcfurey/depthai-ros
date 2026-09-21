@@ -158,8 +158,6 @@ void Slam::mapToOdomCB(const std::string& /*name*/, const std::shared_ptr<dai::A
     mapToOdomConv->toRosMsg(transData, deq);
     while(deq.size() > 0) {
         auto currMsg = deq.front();
-        // pose timestamp might be too late
-        currMsg.header.stamp = getROSNode()->get_clock()->now();
         tfBr->sendTransform(currMsg);
         deq.pop_front();
     }
@@ -171,8 +169,6 @@ void Slam::absolutePoseCB(const std::string& /*name*/, const std::shared_ptr<dai
     absolutePoseConv->toRosMsg(transData, deq);
     while(deq.size() > 0) {
         auto currMsg = deq.front();
-        // pose timestamp might be too late
-        currMsg.header.stamp = getROSNode()->get_clock()->now();
         absolutePosePub->publish(currMsg);
         deq.pop_front();
     }

@@ -120,6 +120,7 @@ Driver::Driver(const rclcpp::NodeOptions& options) : rclcpp::Node("oak", options
 }
 
 Driver::~Driver() {
+    startTimer->cancel();
     if(rclContext) {
         rclContext->remove_pre_shutdown_callback(preShutdownCBHandle);
     }
@@ -127,9 +128,16 @@ Driver::~Driver() {
     stop();
 }
 
+std::shared_ptr<rclcpp::Node> Driver::getNodeHandle() {
+    // The Driver owns these helpers and stops/drains their callbacks before
+    // destroying them. Borrow the node to avoid Driver -> helper -> Driver
+    // ownership cycles. This handle must not escape the Driver's lifetime.
+    return std::shared_ptr<rclcpp::Node>(this, [](rclcpp::Node*) {});
+}
+
 void Driver::onConfigure() {
     std::lock_guard<std::recursive_mutex> lock(lifecycleMtx);
-    ph = std::make_unique<param_handlers::DriverParamHandler>(shared_from_this(), "driver");
+    ph = std::make_unique<param_handlers::DriverParamHandler>(getNodeHandle(), "driver");
     ph->declareParams();
     if(!getDeviceType()) {
         RCLCPP_WARN(get_logger(), "Shutdown requested before a device was found, aborting startup.");
@@ -147,7 +155,7 @@ void Driver::onConfigure() {
 
     if(ph->getParam<bool>("i_publish_tf_from_calibration")) {
         try {
-            tfPub = std::make_unique<depthai_bridge::TFPublisher>(shared_from_this(),
+            tfPub = std::make_unique<depthai_bridge::TFPublisher>(getNodeHandle(),
                                                                   device->readCalibration(),
                                                                   device->getConnectedCameraFeatures(),
                                                                   ph->getParam<std::string>("i_tf_device_name"),
@@ -246,6 +254,7 @@ void Driver::stopImpl() {
     if(pipeline) {
         try {
             pipeline->stop();
+            pipeline->wait();
         } catch(const std::exception& e) {
             if(rclcpp::ok()) {
                 RCLCPP_WARN(get_logger(), "Failed to stop the DepthAI pipeline: %s", e.what());
@@ -467,7 +476,7 @@ void Driver::createPipeline() {
     if(!ph->getParam<std::string>("i_external_calibration_path").empty()) {
         loadCalib(ph->getParam<std::string>("i_external_calibration_path"));
     }
-    generator->createPipeline(shared_from_this(), device, pipeline, ph->getParam<bool>("i_rs_compat"));
+    generator->createPipeline(getNodeHandle(), device, pipeline, ph->getParam<bool>("i_rs_compat"));
     if(ph->getParam<bool>("i_pipeline_dump")) {
         savePipeline();
     }

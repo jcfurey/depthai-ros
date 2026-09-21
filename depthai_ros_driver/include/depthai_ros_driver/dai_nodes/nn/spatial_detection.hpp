@@ -129,13 +129,15 @@ class SpatialDetection : public BaseNode {
         }
     };
     void closeQueues() override {
-        nnQ->removeCallback(nnQCBID);
-        nnQ->close();
-        if(ph->getParam<bool>("i_enable_passthrough")) {
-            ptQ->close();
+        if(nnQ) {
+            nnQ->removeCallback(nnQCBID);
+            nnQ->close();
         }
-        if(ph->getParam<bool>("i_enable_passthrough_depth")) {
-            ptDepthQ->close();
+        if(ptPub) {
+            ptPub->closeQueue();
+        }
+        if(ptDepthPub) {
+            ptDepthPub->closeQueue();
         }
     };
 
@@ -161,10 +163,10 @@ class SpatialDetection : public BaseNode {
     std::shared_ptr<dai::node::SpatialDetectionNetwork> spatialNode;
     std::shared_ptr<dai::node::ImageManip> imageManip;
     std::unique_ptr<param_handlers::NNParamHandler> ph;
-    std::shared_ptr<dai::MessageQueue> nnQ, ptQ, ptDepthQ;
+    std::shared_ptr<dai::MessageQueue> nnQ;
     std::shared_ptr<dai::node::XLinkOut> xoutNN, xoutPT, xoutPTDepth;
     std::string nnQName, ptQName, ptDepthQName;
-    int nnQCBID;
+    int nnQCBID = -1;
 };
 
 }  // namespace nn

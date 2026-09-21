@@ -23,6 +23,7 @@ Thermal::Thermal(
     thermalNode = pipeline->create<dai::node::Thermal>();
     ph = std::make_unique<param_handlers::ThermalParamHandler>(node, getName(), deviceName, rsCompat);
     ph->declareParams(thermalNode);
+    thermalNode->build(ph->getSocketID(), static_cast<float>(ph->getParam<int>(param_handlers::ParamNames::FPS)));
     boardSocket = static_cast<dai::CameraBoardSocket>(ph->getParam<int>(param_handlers::ParamNames::BOARD_SOCKET_ID));
     setInOut(pipeline);
     RCLCPP_DEBUG(node->get_logger(), "Node %s created", daiNodeName.c_str());

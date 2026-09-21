@@ -482,7 +482,9 @@ int Stereo::getHeight() {
 void Stereo::updateParams(const std::vector<rclcpp::Parameter>& params) {
     if(ph->getParam<bool>("i_use_neural_depth")) {
         auto ctrl = ph->setRuntimeParams(params);
-        neuralControl->send(ctrl);
+        if(ctrl) {
+            neuralControl->send(ctrl);
+        }
     }
 }
 

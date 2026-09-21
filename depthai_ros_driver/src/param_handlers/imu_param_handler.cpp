@@ -67,7 +67,11 @@ void ImuParamHandler::declareParams(std::shared_ptr<dai::node::IMU> imu, const s
     // other RVC2 IMUs do not provide magnetometer or rotation-vector reports.
     const bool bno08x = depthai_bridge::isBno08x(imuType);
     const bool magnetometerAvailable = bno08x || platform == dai::Platform::RVC4;
-    if(declareAndLogParam<bool>("i_enable_mag", magnetometerAvailable)) {
+    // Separate magnetic reports are unused by sensor_msgs/Imu. On BNO08x,
+    // requesting them can throttle the combined report stream to the much
+    // lower magnetometer rate. Rotation-vector fusion remains independent.
+    const bool publishMag = getMsgType() != imu::ImuMsgType::IMU;
+    if(declareAndLogParam<bool>("i_enable_mag", magnetometerAvailable && publishMag)) {
         if(magnetometerAvailable) {
             const std::string magnetometerModeName = utils::getUpperCaseStr(declareAndLogParam<std::string>("i_mag_mode", "MAGNETOMETER_UNCALIBRATED"));
             const dai::IMUSensor magnetometerMode = utils::getValFromMap(magnetometerModeName, magnetometerModeMap);

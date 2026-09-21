@@ -10,7 +10,8 @@ import pytest
 import rclpy
 import rclpy.node
 
-from sensor_msgs.msg import Imu
+from sensor_msgs.msg import Imu, Image
+from rclpy.parameter import Parameter
 from vision_msgs.msg import Detection2DArray
 from ament_index_python.packages import get_package_share_directory
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -96,6 +97,18 @@ class TestDriverLaunch(unittest.TestCase):
         self.assertTrue(
             self.testHelper.testIncomingMessages(Detection2DArray, "/oak/nn/detections")
         )
+
+
+    def test_passthrough_survives_restart(self, proc_output):
+        params = [Parameter("nn.i_enable_passthrough", value=True).to_parameter_msg()]
+        self.assertTrue(self.testHelper.setParameters(params))
+        self.assertTrue(self.testHelper.testIncomingMessages(
+            Image, "/oak/nn/passthrough/image_raw", min_messages=5, timeout=30
+        ))
+        self.assertTrue(self.testHelper.restartDriver())
+        self.assertTrue(self.testHelper.testIncomingMessages(
+            Image, "/oak/nn/passthrough/image_raw", min_messages=5, timeout=30
+        ))
 
 
 @launch_testing.post_shutdown_test()

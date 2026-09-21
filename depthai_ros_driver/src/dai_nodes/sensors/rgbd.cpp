@@ -117,6 +117,9 @@ void RGBD::setInOut(std::shared_ptr<dai::Pipeline> /* pipeline */) {}
 
 void RGBD::setupQueues(std::shared_ptr<dai::Device> /* device */) {
     using ParamNames = param_handlers::ParamNames;
+    if(!ph->getParam<bool>(ParamNames::PUBLISH_TOPIC)) {
+        return;
+    }
     pclQ = rgbdNode->pcl.createOutputQueue(ph->getParam<int>(ParamNames::MAX_Q_SIZE), false);
     auto tfPrefix = getOpticalFrameName(getSocketName(ph->getSocketID()));
     rclcpp::PublisherOptions options;
@@ -130,8 +133,10 @@ void RGBD::setupQueues(std::shared_ptr<dai::Device> /* device */) {
 }
 
 void RGBD::closeQueues() {
-    pclQ->removeCallback(cbID);
-    pclQ->close();
+    if(pclQ) {
+        pclQ->removeCallback(cbID);
+        pclQ->close();
+    }
 }
 
 void RGBD::pclCB(const std::string& /*name*/, const std::shared_ptr<dai::ADatatype>& data) {
@@ -139,8 +144,7 @@ void RGBD::pclCB(const std::string& /*name*/, const std::shared_ptr<dai::ADataty
     std::deque<sensor_msgs::msg::PointCloud2> deq;
     pclConv->toRosMsg(pclData, deq);
     while(deq.size() > 0) {
-        auto currMsg = deq.front();
-        pclPub->publish(currMsg);
+        pclPub->publish(deq.front());
         deq.pop_front();
     }
 }

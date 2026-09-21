@@ -84,7 +84,7 @@ class Detection : public BaseNode {
         rclcpp::PublisherOptions options;
         options.qos_overriding_options = rclcpp::QosOverridingOptions();
         detPub = getROSNode()->template create_publisher<vision_msgs::msg::Detection2DArray>("~/" + getName() + "/detections", 10, options);
-        nnQ->addCallback(std::bind(&Detection::detectionCB, this, std::placeholders::_1, std::placeholders::_2));
+        nnQCBID = nnQ->addCallback(std::bind(&Detection::detectionCB, this, std::placeholders::_1, std::placeholders::_2));
 
         if(ph->getParam<bool>("i_enable_passthrough")) {
             utils::ImgConverterConfig convConf;
@@ -142,9 +142,12 @@ class Detection : public BaseNode {
      * @brief      Closes the queues for the DetectionNetwork node and the passthrough.
      */
     void closeQueues() override {
-        nnQ->close();
-        if(ph->getParam<bool>("i_enable_passthrough")) {
-            ptQ->close();
+        if(nnQ) {
+            nnQ->removeCallback(nnQCBID);
+            nnQ->close();
+        }
+        if(ptPub) {
+            ptPub->closeQueue();
         }
     };
 
@@ -172,7 +175,8 @@ class Detection : public BaseNode {
     std::shared_ptr<dai::node::DetectionNetwork> detectionNode;
     std::shared_ptr<dai::node::ImageManip> imageManip;
     std::unique_ptr<param_handlers::NNParamHandler> ph;
-    std::shared_ptr<dai::MessageQueue> nnQ, ptQ;
+    std::shared_ptr<dai::MessageQueue> nnQ;
+    int nnQCBID = -1;
     std::string nnQName, ptQName;
 };
 

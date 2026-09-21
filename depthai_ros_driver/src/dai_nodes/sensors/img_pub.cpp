@@ -31,6 +31,10 @@ ImagePublisher::ImagePublisher(std::shared_ptr<rclcpp::Node> node,
     }
 }
 void ImagePublisher::setup(std::shared_ptr<dai::Device> device, const utils::ImgConverterConfig& convConf, const utils::ImgPublisherConfig& pubConf) {
+    if(pubConf.publishCompressed && !encConfig.enabled) {
+        throw std::invalid_argument(pubConf.daiNodeName + ".i_publish_compressed requires i_low_bandwidth=true. "
+                                    "For raw device transport, use an image_transport compressed subscriber instead.");
+    }
     convConfig = convConf;
     pubConfig = pubConf;
     createImageConverter(device);
@@ -138,7 +142,11 @@ void ImagePublisher::closeQueue() {
     }
 }
 void ImagePublisher::link(dai::Node::Input& in) {
-    out->link(in);
+    if(encConfig.enabled) {
+        encoder->out.link(in);
+    } else {
+        out->link(in);
+    }
 }
 std::shared_ptr<dai::MessageQueue> ImagePublisher::getQueue() {
     return dataQ;
@@ -158,31 +166,41 @@ std::shared_ptr<Image> ImagePublisher::convertData(const std::shared_ptr<dai::AD
     auto img = std::make_shared<Image>();
     if(encConfig.enabled) {
         auto daiImg = std::dynamic_pointer_cast<dai::EncodedFrame>(data);
+        if(!daiImg) {
+            RCLCPP_ERROR(node->get_logger(), "Expected an EncodedFrame on %s", qName.c_str());
+            return nullptr;
+        }
         if(pubConfig.calibrationFile.empty()) {
             info = converter->generateCameraInfo(daiImg);
         } else {
             info = infoManager->getCameraInfo();
         }
         if(pubConfig.publishCompressed) {
-            auto rawMsg = converter->toRosMsgRawPtr(daiImg, info);
-            info.header = rawMsg.header;
             if(encConfig.profile == dai::VideoEncoderProperties::Profile::MJPEG) {
                 std::deque<sensor_msgs::msg::CompressedImage> deq;
                 converter->toRosCompressedMsg(daiImg, deq);
-                img->compressedImg = std::make_unique<sensor_msgs::msg::CompressedImage>(deq.front());
+                img->compressedImg = std::make_unique<sensor_msgs::msg::CompressedImage>(std::move(deq.front()));
+                info.header = img->compressedImg->header;
             } else {
                 std::deque<ffmpeg_image_transport_msgs::msg::FFMPEGPacket> deq;
                 converter->toRosFFMPEGPacket(daiImg, deq);
-                img->ffmpegPacket = std::make_unique<ffmpeg_image_transport_msgs::msg::FFMPEGPacket>(deq.front());
+                img->ffmpegPacket = std::make_unique<ffmpeg_image_transport_msgs::msg::FFMPEGPacket>(std::move(deq.front()));
+                img->ffmpegPacket->width = info.width;
+                img->ffmpegPacket->height = info.height;
+                info.header = img->ffmpegPacket->header;
             }
         } else {
             auto rawMsg = converter->toRosMsgRawPtr(daiImg, info);
             info.header = rawMsg.header;
-            sensor_msgs::msg::Image::UniquePtr msg = std::make_unique<sensor_msgs::msg::Image>(rawMsg);
+            sensor_msgs::msg::Image::UniquePtr msg = std::make_unique<sensor_msgs::msg::Image>(std::move(rawMsg));
             img->image = std::move(msg);
         }
     } else {
         auto daiImg = std::dynamic_pointer_cast<dai::ImgFrame>(data);
+        if(!daiImg) {
+            RCLCPP_ERROR(node->get_logger(), "Expected an ImgFrame on %s", qName.c_str());
+            return nullptr;
+        }
         if(pubConfig.calibrationFile.empty()) {
             info = converter->generateCameraInfo(daiImg);
         } else {
@@ -190,7 +208,7 @@ std::shared_ptr<Image> ImagePublisher::convertData(const std::shared_ptr<dai::AD
         }
         auto rawMsg = converter->toRosMsgRawPtr(daiImg, info);
         info.header = rawMsg.header;
-        sensor_msgs::msg::Image::UniquePtr msg = std::make_unique<sensor_msgs::msg::Image>(rawMsg);
+        sensor_msgs::msg::Image::UniquePtr msg = std::make_unique<sensor_msgs::msg::Image>(std::move(rawMsg));
         img->image = std::move(msg);
     }
     if(pubConfig.rectified) {
@@ -204,6 +222,9 @@ std::shared_ptr<Image> ImagePublisher::convertData(const std::shared_ptr<dai::AD
     return img;
 }
 void ImagePublisher::publish(std::shared_ptr<Image> img) {
+    if(!img) {
+        return;
+    }
     if(pubConfig.publishCompressed) {
         if(encConfig.profile == dai::VideoEncoderProperties::Profile::MJPEG) {
             compressedImgPub->publish(std::move(img->compressedImg));
@@ -222,12 +243,16 @@ void ImagePublisher::publish(std::shared_ptr<Image> img) {
     }
 }
 void ImagePublisher::publish(std::shared_ptr<Image> img, rclcpp::Time timestamp) {
+    if(!img) {
+        return;
+    }
     img->info->header.stamp = timestamp;
     if(pubConfig.publishCompressed) {
         if(encConfig.profile == dai::VideoEncoderProperties::Profile::MJPEG) {
             img->compressedImg->header.stamp = timestamp;
         } else {
             img->ffmpegPacket->header.stamp = timestamp;
+            img->ffmpegPacket->pts = timestamp.nanoseconds();
         }
     } else {
         img->image->header.stamp = timestamp;
@@ -236,10 +261,30 @@ void ImagePublisher::publish(std::shared_ptr<Image> img, rclcpp::Time timestamp)
 }
 
 void ImagePublisher::publish(const std::shared_ptr<dai::ADatatype>& data) {
-    if(rclcpp::ok()) {
+    if(rclcpp::ok() && shouldPublish()) {
         auto img = convertData(data);
         publish(img);
     }
+}
+
+bool ImagePublisher::shouldPublish() const {
+    if(!pubConfig.lazyPub) {
+        return true;
+    }
+    if(pubConfig.publishCompressed) {
+        return (infoPub && infoPub->get_subscription_count() > 0) || (compressedImgPub && compressedImgPub->get_subscription_count() > 0)
+               || (ffmpegPub && ffmpegPub->get_subscription_count() > 0);
+    }
+    // CameraPublisher counts both image and camera-info subscriptions.
+    return imgPubIT.getNumSubscribers() > 0;
+}
+
+rclcpp::Time ImagePublisher::getTimestamp(const std::shared_ptr<dai::ADatatype>& data) {
+    auto buffer = std::dynamic_pointer_cast<dai::Buffer>(data);
+    if(!buffer) {
+        throw std::invalid_argument("Expected a timestamped image buffer on " + qName);
+    }
+    return rclcpp::Time(converter->getRosHeader(buffer, convConfig.addExposureOffset, convConfig.expOffset).stamp);
 }
 }  // namespace sensor_helpers
 }  // namespace dai_nodes

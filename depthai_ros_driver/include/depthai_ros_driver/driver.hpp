@@ -35,6 +35,7 @@ class Driver : public rclcpp::Node {
 
    private:
     friend class DriverTestAccess;
+    std::shared_ptr<rclcpp::Node> getNodeHandle();
     /**
      * @brief      Print information about the device type.
      * @return     false if shutdown was requested before a device was found.

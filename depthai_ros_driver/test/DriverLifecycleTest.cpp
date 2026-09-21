@@ -15,7 +15,7 @@ class DriverTestAccess {
    public:
     static void initialize(const std::shared_ptr<Driver>& driver) {
         driver->startTimer->cancel();
-        driver->ph = std::make_unique<param_handlers::DriverParamHandler>(driver, "driver");
+        driver->ph = std::make_unique<param_handlers::DriverParamHandler>(driver->getNodeHandle(), "driver");
         driver->ph->declareParams();
     }
     static void configure(Driver& driver, dai::Platform platform = dai::Platform::RVC2, bool constrained = true) {
@@ -36,11 +36,6 @@ class DriverTestAccess {
         }
         return response->success;
     }
-    static void release(Driver& driver) {
-        // Param handlers own their ROS node; break that ownership for this
-        // fixture, which intentionally never starts a pipeline.
-        driver.ph.reset();
-    }
 };
 
 class DriverLifecycleTest : public testing::Test {
@@ -53,7 +48,6 @@ class DriverLifecycleTest : public testing::Test {
     }
     void TearDown() override {
         if(driver) {
-            DriverTestAccess::release(*driver);
             driver.reset();
         }
         if(context && context->is_valid()) {
@@ -128,7 +122,6 @@ TEST_F(DriverLifecycleTest, StartupOverridesStillTakePrecedence) {
     DriverTestAccess::configure(*configuredDriver);
     EXPECT_FALSE(configuredDriver->get_parameter("rgb.i_low_bandwidth").as_bool());
     EXPECT_TRUE(configuredDriver->get_parameter("left.i_low_bandwidth").as_bool());
-    DriverTestAccess::release(*configuredDriver);
 }
 
 TEST_F(DriverLifecycleTest, RejectedAtomicUpdateDoesNotPinTransportDefault) {
@@ -191,4 +184,9 @@ TEST_F(DriverLifecycleTest, TopicSimulationFailsBeforeAccessingCameraNodes) {
     EXPECT_THROW(dai_nodes::SensorWrapper("left", driver, nullptr, "OAK-D", false, dai::CameraBoardSocket::CAM_B), std::invalid_argument);
 }
 
+TEST_F(DriverLifecycleTest, ReleasingConfiguredDriverRunsDestructor) {
+    std::weak_ptr<Driver> weak = driver;
+    driver.reset();
+    EXPECT_TRUE(weak.expired());
+}
 }  // namespace depthai_ros_driver

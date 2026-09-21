@@ -80,6 +80,8 @@ class ImagePublisher {
     void addQueueCB();
     void closeQueue();
     bool isSynced();
+    bool shouldPublish() const;
+    rclcpp::Time getTimestamp(const std::shared_ptr<dai::ADatatype>& data);
     std::shared_ptr<dai::MessageQueue> getQueue();
     void link(dai::Node::Input& in);
     std::string getQueueName();
@@ -90,6 +92,7 @@ class ImagePublisher {
     std::shared_ptr<dai::node::VideoEncoder> createEncoder(std::shared_ptr<dai::Pipeline> pipeline, const utils::VideoEncoderConfig& encoderConfig);
 
    private:
+    friend class ImagePublisherTestAccess;
     std::shared_ptr<rclcpp::Node> node;
     utils::VideoEncoderConfig encConfig;
     utils::ImgPublisherConfig pubConfig;
@@ -104,7 +107,7 @@ class ImagePublisher {
     rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr compressedImgPub;
     image_transport::CameraPublisher imgPubIT;
     std::shared_ptr<dai::MessageQueue> dataQ;
-    int cbID;
+    int cbID = -1;
     std::string qName;
     bool ipcEnabled;
     bool synced;

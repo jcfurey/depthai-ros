@@ -33,6 +33,11 @@ and thermal outputs remain raw. On platforms that support encoded stereo, it
 uses integer disparity; select `RAW` when subpixel depth is required.
 A per-stream `i_low_bandwidth` parameter overrides the global transport profile
 for that stream. Overrides set at runtime are also preserved across restarts.
+Direct `i_publish_compressed` publication requires that stream's
+`i_low_bandwidth=true`; incompatible settings are rejected at startup. With raw
+device transport, use an `image_transport` compressed subscriber for host-side
+encoding. Synchronized streams support device-side encoding. Lazy publishers
+skip image conversion when neither image nor camera-info subscribers are present.
 The optional host-side ffmpeg image transport defaults to a one-frame GOP for
 low-latency viewing; tune `image_transport_ffmpeg_gop_size` when bandwidth is
 more important than seek/recovery latency.
@@ -80,6 +85,16 @@ For the default `oak` node, the RGBD pipeline publishes:
 - `/oak/imu/data`
 - `/oak/rgbd/points` when `pointcloud.enable:=true`
 - `/diagnostics` when diagnostics are enabled
+
+Set `rgbd.i_publish_topic=false` to suppress the point-cloud ROS output while
+keeping the RGBD node available to the pipeline. Magnetometer messages use tesla;
+`imu.i_mag_cov` is the variance in tesla squared. VIO and SLAM outputs retain
+measurement timestamps so transport latency does not shift their time relative
+to camera and IMU messages.
+Separate magnetometer reports default to enabled only for `IMU_WITH_MAG` and
+`IMU_WITH_MAG_SPLIT` messages; `imu.i_enable_mag` can override this. This avoids
+throttling the BNO08x IMU stream with unused magnetic reports when publishing
+plain `sensor_msgs/Imu`, while retaining rotation-vector fusion.
 
 Inspect the active graph rather than assuming optional streams are present:
 

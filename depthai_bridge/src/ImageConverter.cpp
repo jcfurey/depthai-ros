@@ -230,7 +230,7 @@ void ImageConverter::toRosFFMPEGPacket(std::shared_ptr<dai::EncodedFrame> inData
     outFrameMsg.width = camWidth;
     outFrameMsg.height = camHeight;
     outFrameMsg.encoding = ffmpegEncoding;
-    outFrameMsg.pts = header.stamp.sec * 1000000000 + header.stamp.nanosec;  // in nanoseconds
+    outFrameMsg.pts = rclcpp::Time(header.stamp).nanoseconds();
     outFrameMsg.flags = (int)(ft == dai::EncodedFrame::FrameType::I);
     outFrameMsg.is_bigendian = false;
     outFrameMsg.data.reserve(inData->getData().size());

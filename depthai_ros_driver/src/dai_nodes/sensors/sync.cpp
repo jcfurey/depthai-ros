@@ -29,7 +29,7 @@ void Sync::setInOut(std::shared_ptr<dai::Pipeline> /* pipeline */) {}
 
 void Sync::setupQueues(std::shared_ptr<dai::Device> /* device */) {
     outQueue = syncNode->out.createOutputQueue(8, false);
-    outQueue->addCallback([this](const std::shared_ptr<dai::ADatatype>& in) {
+    cbID = outQueue->addCallback([this](const std::shared_ptr<dai::ADatatype>& in) {
         auto group = std::dynamic_pointer_cast<dai::MessageGroup>(in);
         if(group) {
             bool firstMsg = true;
@@ -38,12 +38,13 @@ void Sync::setupQueues(std::shared_ptr<dai::Device> /* device */) {
                 // find publisher by message namespace
                 for(auto& pub : publishers) {
                     if(pub->getQueueName() == msg.first) {
-                        auto data = pub->convertData(msg.second);
                         if(firstMsg) {
-                            timestamp = data->info->header.stamp;
+                            timestamp = pub->getTimestamp(msg.second);
                             firstMsg = false;
                         }
-                        pub->publish(std::move(data), timestamp);
+                        if(pub->shouldPublish()) {
+                            pub->publish(pub->convertData(msg.second), timestamp);
+                        }
                     }
                 }
             }
@@ -61,14 +62,19 @@ dai::Node::Input& Sync::getInputByName(const std::string& name) {
 }
 
 void Sync::closeQueues() {
-    outQueue->close();
+    if(outQueue) {
+        outQueue->removeCallback(cbID);
+        outQueue->close();
+    }
 }
 
 void Sync::addPublishers(const std::vector<std::shared_ptr<sensor_helpers::ImagePublisher>>& pubs) {
     for(auto& pub : pubs) {
-        pub->link(getInputByName(pub->getQueueName()));
+        if(pub->isSynced()) {
+            pub->link(getInputByName(pub->getQueueName()));
+            publishers.push_back(pub);
+        }
     }
-    publishers.insert(publishers.end(), pubs.begin(), pubs.end());
 }
 
 }  // namespace dai_nodes

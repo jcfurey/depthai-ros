@@ -114,7 +114,6 @@ void Vio::transCB(const std::string& /*name*/, const std::shared_ptr<dai::ADatat
     odomConv->toRosMsg(transData, deq);
     while(deq.size() > 0) {
         auto currMsg = deq.front();
-        currMsg.header.stamp = getROSNode()->get_clock()->now();
         odomPub->publish(currMsg);
         if(publishTf) {
             geometry_msgs::msg::TransformStamped transformMsg;

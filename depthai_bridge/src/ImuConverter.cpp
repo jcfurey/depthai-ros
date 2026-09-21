@@ -76,9 +76,10 @@ void ImuConverter::fillImuMsg(depthai_ros_msgs::msg::ImuWithMagneticField& msg, 
 }
 
 void ImuConverter::fillImuMsg(depthai_ros_msgs::msg::ImuWithMagneticField& msg, dai::IMUReportMagneticField report) {
-    msg.field.magnetic_field.x = report.x;
-    msg.field.magnetic_field.y = report.y;
-    msg.field.magnetic_field.z = report.z;
+    // DepthAI reports microtesla; ROS requires tesla. Covariance is configured in T^2.
+    msg.field.magnetic_field.x = report.x * 1e-6;
+    msg.field.magnetic_field.y = report.y * 1e-6;
+    msg.field.magnetic_field.z = report.z * 1e-6;
     msg.field.magnetic_field_covariance = {magnetic_field_cov, 0.0, 0.0, 0.0, magnetic_field_cov, 0.0, 0.0, 0.0, magnetic_field_cov};
 }
 

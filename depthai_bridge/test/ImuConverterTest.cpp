@@ -98,9 +98,10 @@ TEST(ImuConverterTest, ToRosDaiMsg) {
     EXPECT_DOUBLE_EQ(outImuMsgs[0].imu.orientation.y, 8.0);
     EXPECT_DOUBLE_EQ(outImuMsgs[0].imu.orientation.z, 9.0);
     EXPECT_DOUBLE_EQ(outImuMsgs[0].imu.orientation.w, 1.0);
-    EXPECT_DOUBLE_EQ(outImuMsgs[0].field.magnetic_field.x, 11.0);
-    EXPECT_DOUBLE_EQ(outImuMsgs[0].field.magnetic_field.y, 12.0);
-    EXPECT_DOUBLE_EQ(outImuMsgs[0].field.magnetic_field.z, 13.0);
+    EXPECT_DOUBLE_EQ(outImuMsgs[0].field.magnetic_field_covariance[0], 0.1);
+    EXPECT_DOUBLE_EQ(outImuMsgs[0].field.magnetic_field.x, 11.0e-6);
+    EXPECT_DOUBLE_EQ(outImuMsgs[0].field.magnetic_field.y, 12.0e-6);
+    EXPECT_DOUBLE_EQ(outImuMsgs[0].field.magnetic_field.z, 13.0e-6);
 }
 
 }  // namespace depthai_bridge

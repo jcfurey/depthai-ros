@@ -48,6 +48,7 @@ class StereoParamHandler : public BaseParamHandler {
     std::unordered_map<std::string, StereoType> stereoTypeMap;
     dai::CameraBoardSocket alignSocket;
     dai::DeviceModelZoo model;
+    std::shared_ptr<dai::NeuralDepthConfig> neuralConfig;
 };
 }  // namespace param_handlers
 }  // namespace depthai_ros_driver

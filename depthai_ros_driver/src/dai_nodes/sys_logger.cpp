@@ -18,7 +18,9 @@ SysLogger::SysLogger(
     setInOut(pipeline);
     RCLCPP_DEBUG(node->get_logger(), "Node %s created", daiNodeName.c_str());
 }
-SysLogger::~SysLogger() = default;
+SysLogger::~SysLogger() {
+    closeQueues();
+}
 
 void SysLogger::setNames() {
     loggerQName = getName() + "_queue";
@@ -34,7 +36,12 @@ void SysLogger::setupQueues(std::shared_ptr<dai::Device> device) {
 }
 
 void SysLogger::closeQueues() {
-    loggerQ->close();
+    if(loggerQ) {
+        loggerQ->close();
+    }
+    if(updater) {
+        updater->removeByName("sys_logger");
+    }
 }
 
 std::string SysLogger::sysInfoToString(const dai::SystemInformation& sysInfo) {

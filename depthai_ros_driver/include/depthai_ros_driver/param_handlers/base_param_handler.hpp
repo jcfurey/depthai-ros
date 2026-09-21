@@ -119,6 +119,27 @@ class BaseParamHandler {
     }
 
    protected:
+    // On-set callbacks run before ROS commits the batch. Resolve companion
+    // values from the complete pending update, independent of parameter order.
+    template <typename T>
+    T getUpdatedParam(const std::string& name, const std::vector<rclcpp::Parameter>& params) {
+        for(auto p = params.rbegin(); p != params.rend(); ++p) {
+            if(p->get_name() == getFullParamName(name)) {
+                return p->get_value<T>();
+            }
+        }
+        return getParam<T>(name);
+    }
+    bool hasUpdatedParam(const std::vector<rclcpp::Parameter>& params, std::initializer_list<const char*> names) {
+        for(const auto& p : params) {
+            for(const auto* name : names) {
+                if(p.get_name() == getFullParamName(name)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
     std::shared_ptr<rclcpp::Node> getROSNode() {
         return baseNode;
     }
