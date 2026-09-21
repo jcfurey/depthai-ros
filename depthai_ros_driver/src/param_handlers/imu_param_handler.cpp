@@ -63,8 +63,10 @@ void ImuParamHandler::declareParams(std::shared_ptr<dai::node::IMU> imu, const s
         imu->enableIMUSensor(gyroscopeMode, gyroscopeFreq);
     }
     const auto platform = imu->getParentPipeline().getDefaultDevice()->getPlatform();
-    // Magnetometer is only available on BNO086 on RVC2 and on all IMUs on RVC4
-    const bool magnetometerAvailable = imuType == "BNO086" || platform == dai::Platform::RVC4;
+    // BNO08x parts used by older OAK-D revisions are 9-axis IMUs. BMI270 and
+    // other RVC2 IMUs do not provide magnetometer or rotation-vector reports.
+    const bool bno08x = depthai_bridge::isBno08x(imuType);
+    const bool magnetometerAvailable = bno08x || platform == dai::Platform::RVC4;
     if(declareAndLogParam<bool>("i_enable_mag", magnetometerAvailable)) {
         if(magnetometerAvailable) {
             const std::string magnetometerModeName = utils::getUpperCaseStr(declareAndLogParam<std::string>("i_mag_mode", "MAGNETOMETER_UNCALIBRATED"));
@@ -78,7 +80,7 @@ void ImuParamHandler::declareParams(std::shared_ptr<dai::node::IMU> imu, const s
         }
     }
 
-    const bool rotationAvailable = (imuType == "BNO086" && platform == dai::Platform::RVC2) || platform == dai::Platform::RVC4;
+    const bool rotationAvailable = bno08x || platform == dai::Platform::RVC4;
     if(declareAndLogParam<bool>("i_enable_rotation", rotationAvailable)) {
         if(rotationAvailable) {
             const std::string rotationModeName = utils::getUpperCaseStr(declareAndLogParam<std::string>("i_rot_mode", "ROTATION_VECTOR"));

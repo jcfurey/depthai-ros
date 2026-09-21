@@ -12,14 +12,27 @@
 #include "rclcpp/version.h"
 
 namespace depthai_ros_driver {
+namespace {
+
+bool isConnectableState(XLinkDeviceState_t state) {
+    return state == X_LINK_ANY_STATE || state == X_LINK_UNBOOTED || state == X_LINK_BOOTLOADER || state == X_LINK_FLASH_BOOTED || state == X_LINK_GATE
+           || state == X_LINK_GATE_SETUP;
+}
+
+bool isBootedState(XLinkDeviceState_t state) {
+    return state == X_LINK_BOOTED || state == X_LINK_BOOTED_NON_EXCLUSIVE || state == X_LINK_GATE_BOOTED;
+}
+
+}  // namespace
 
 Driver::Driver(const rclcpp::NodeOptions& options) : rclcpp::Node("driver", options) {
     //  Since we cannot use shared_from this before the object is initialized, we need to use a timer to start the device.
-    rclcpp::on_shutdown([this]() { stop(); }, options.context());
-    // to prevent starting multiple times when not using static executor
-    if(!starting) {
-        startTimer = this->create_wall_timer(std::chrono::seconds(1), [this]() {
-            starting = true;
+    // Keep the handle so unloading a component cannot leave a shutdown callback with a dangling `this` pointer.
+    rclContext = options.context();
+    shutdownCBHandle = rclContext->add_on_shutdown_callback([this]() { stop(); });
+    startTimer = this->create_wall_timer(std::chrono::seconds(1), [this]() {
+        // Prevent starting multiple times when not using a static executor.
+        if(!starting.exchange(true)) {
             start();
             srvGroup = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
@@ -56,41 +69,56 @@ Driver::Driver(const rclcpp::NodeOptions& options) : rclcpp::Node("driver", opti
                 this->create_subscription<diagnostic_msgs::msg::DiagnosticArray>("/diagnostics", 10, std::bind(&Driver::diagCB, this, std::placeholders::_1));
             RCLCPP_INFO(get_logger(), "Driver ready!");
             startTimer->cancel();
-        });
-    }
+        }
+    });
 }
+
+Driver::~Driver() {
+    if(rclContext) {
+        rclContext->remove_on_shutdown_callback(shutdownCBHandle);
+    }
+    stop();
+}
+
 void Driver::onConfigure() {
     ph = std::make_unique<param_handlers::DriverParamHandler>(shared_from_this(), "driver");
     ph->declareParams();
-    getDeviceType();
+    if(!getDeviceType()) {
+        RCLCPP_WARN(get_logger(), "Shutdown requested before a device was found, aborting startup.");
+        return;
+    }
     createPipeline();
     setupQueues();
     setIR();
     // If model name not set get one from the device
     std::string camModel = ph->getParam<std::string>("i_tf_device_model");
     if(camModel.empty()) {
-        camModel = device->getDeviceName();
+        camModel = deviceName;
     }
 
     if(ph->getParam<bool>("i_publish_tf_from_calibration")) {
-        tfPub = std::make_unique<depthai_bridge::TFPublisher>(shared_from_this(),
-                                                              device->readCalibration(),
-                                                              device->getConnectedCameraFeatures(),
-                                                              ph->getParam<std::string>("i_tf_device_name"),
-                                                              camModel,
-                                                              ph->getParam<std::string>("i_tf_base_frame"),
-                                                              ph->getParam<std::string>("i_tf_parent_frame"),
-                                                              ph->getParam<std::string>("i_tf_cam_pos_x"),
-                                                              ph->getParam<std::string>("i_tf_cam_pos_y"),
-                                                              ph->getParam<std::string>("i_tf_cam_pos_z"),
-                                                              ph->getParam<std::string>("i_tf_cam_roll"),
-                                                              ph->getParam<std::string>("i_tf_cam_pitch"),
-                                                              ph->getParam<std::string>("i_tf_cam_yaw"),
-                                                              ph->getParam<std::string>("i_tf_imu_from_descr"),
-                                                              ph->getParam<std::string>("i_tf_custom_urdf_location"),
-                                                              ph->getParam<std::string>("i_tf_custom_xacro_args"),
-                                                              ph->getParam<bool>("i_rs_compat"),
-                                                              ph->getParam<std::string>("i_tf_prefix"));
+        try {
+            tfPub = std::make_unique<depthai_bridge::TFPublisher>(shared_from_this(),
+                                                                  device->readCalibration(),
+                                                                  device->getConnectedCameraFeatures(),
+                                                                  ph->getParam<std::string>("i_tf_device_name"),
+                                                                  camModel,
+                                                                  ph->getParam<std::string>("i_tf_base_frame"),
+                                                                  ph->getParam<std::string>("i_tf_parent_frame"),
+                                                                  ph->getParam<std::string>("i_tf_cam_pos_x"),
+                                                                  ph->getParam<std::string>("i_tf_cam_pos_y"),
+                                                                  ph->getParam<std::string>("i_tf_cam_pos_z"),
+                                                                  ph->getParam<std::string>("i_tf_cam_roll"),
+                                                                  ph->getParam<std::string>("i_tf_cam_pitch"),
+                                                                  ph->getParam<std::string>("i_tf_cam_yaw"),
+                                                                  ph->getParam<std::string>("i_tf_imu_from_descr"),
+                                                                  ph->getParam<std::string>("i_tf_custom_urdf_location"),
+                                                                  ph->getParam<std::string>("i_tf_custom_xacro_args"),
+                                                                  ph->getParam<bool>("i_rs_compat"),
+                                                                  ph->getParam<std::string>("i_tf_prefix"));
+        } catch(const std::exception& e) {
+            RCLCPP_ERROR(get_logger(), "Could not publish TF from device calibration: %s. Camera streaming will continue without calibration TF.", e.what());
+        }
     }
     pipeline->start();
     const auto* rosDistro = std::getenv("ROS_DISTRO");
@@ -114,6 +142,11 @@ void Driver::diagCB(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg) 
 }
 
 void Driver::start() {
+    std::lock_guard<std::mutex> lock(lifecycleMtx);
+    startImpl();
+}
+
+void Driver::startImpl() {
     RCLCPP_INFO(this->get_logger(), "Starting driver.");
     if(!camRunning) {
         onConfigure();
@@ -123,12 +156,22 @@ void Driver::start() {
 }
 
 void Driver::stop() {
-    if(rclcpp::ok()) {
-        RCLCPP_INFO(get_logger(), "Stopping driver.");
-    }
+    std::lock_guard<std::mutex> lock(lifecycleMtx);
+    stopImpl();
+}
+
+void Driver::stopImpl() {
     if(camRunning) {
-        pipeline->stop();
+        if(rclcpp::ok()) {
+            RCLCPP_INFO(get_logger(), "Stopping driver.");
+        }
+        if(pipeline) {
+            pipeline->stop();
+        }
+        tfPub.reset();
         generator.reset();
+        pipeline.reset();
+        device.reset();
         camRunning = false;
         if(rclcpp::ok()) {
             RCLCPP_INFO(get_logger(), "Driver stopped!");
@@ -141,12 +184,11 @@ void Driver::stop() {
 }
 
 void Driver::restart() {
-    RCLCPP_ERROR(get_logger(), "Restarting driver");
-    stop();
-    start();
-    if(camRunning) {
-        return;
-    } else {
+    std::lock_guard<std::mutex> lock(lifecycleMtx);
+    RCLCPP_WARN(get_logger(), "Restarting driver");
+    stopImpl();
+    startImpl();
+    if(!camRunning) {
         RCLCPP_ERROR(get_logger(), "Restarting driver failed.");
     }
 }
@@ -166,8 +208,17 @@ void Driver::loadCalib(const std::string& path) {
 }
 
 void Driver::saveCalibCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response::SharedPtr res) {
-    saveCalib();
-    res->success = true;
+    try {
+        if(!camRunning || !device) {
+            throw std::runtime_error("Driver is not running.");
+        }
+        saveCalib();
+        res->success = true;
+    } catch(const std::exception& e) {
+        RCLCPP_ERROR(get_logger(), "Saving calibration failed: %s", e.what());
+        res->success = false;
+        res->message = e.what();
+    }
 }
 
 void Driver::savePipeline() {
@@ -180,38 +231,84 @@ void Driver::savePipeline() {
 }
 
 void Driver::savePipelineCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response::SharedPtr res) {
-    savePipeline();
-    res->success = true;
+    try {
+        if(!camRunning || !device || !pipeline) {
+            throw std::runtime_error("Driver is not running.");
+        }
+        savePipeline();
+        res->success = true;
+    } catch(const std::exception& e) {
+        RCLCPP_ERROR(get_logger(), "Saving pipeline failed: %s", e.what());
+        res->success = false;
+        res->message = e.what();
+    }
 }
 
 void Driver::startCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response::SharedPtr res) {
-    start();
-    res->success = true;
+    try {
+        start();
+        res->success = camRunning;
+        if(!camRunning) {
+            res->message = "Driver did not start; check the logs for details.";
+        }
+    } catch(const std::exception& e) {
+        RCLCPP_ERROR(get_logger(), "Starting driver failed: %s", e.what());
+        res->success = false;
+        res->message = e.what();
+    }
 }
 void Driver::stopCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response::SharedPtr res) {
-    stop();
-    res->success = true;
+    try {
+        stop();
+        res->success = true;
+    } catch(const std::exception& e) {
+        RCLCPP_ERROR(get_logger(), "Stopping driver failed: %s", e.what());
+        res->success = false;
+        res->message = e.what();
+    }
 }
-void Driver::getDeviceType() {
-    startDevice();
+bool Driver::getDeviceType() {
+    if(!startDevice()) {
+        return false;
+    }
     platform = device->getPlatform();
-    auto boardID = device->readCalibration2().getEepromData().boardName;
-    RCLCPP_DEBUG(get_logger(), "Board ID: %s", boardID.c_str());
+    std::string boardID;
+    try {
+        boardID = device->readCalibrationOrDefault().getEepromData().boardName;
+    } catch(const std::exception& e) {
+        RCLCPP_WARN(get_logger(), "Could not read the device EEPROM board name: %s. Falling back to detected camera capabilities.", e.what());
+    }
+    if(boardID.empty()) {
+        RCLCPP_WARN(get_logger(), "Device EEPROM has no board name; using detected camera capabilities.");
+    } else {
+        RCLCPP_INFO(get_logger(), "Board ID: %s", boardID.c_str());
+    }
     pipeline = std::make_shared<dai::Pipeline>(device);
-    deviceName = device->getDeviceName();
+    std::string reportedDeviceName;
+    try {
+        reportedDeviceName = device->getDeviceName();
+    } catch(const std::exception& e) {
+        RCLCPP_WARN(get_logger(), "Could not read the device model name: %s. Falling back to the board name and camera capabilities.", e.what());
+    }
+    deviceName = depthai_bridge::resolveDeviceModelName(reportedDeviceName, boardID, device->getConnectedCameraFeatures().size());
     RCLCPP_INFO(get_logger(), "Device type: %s", deviceName.c_str());
     for(auto& sensor : device->getCameraSensorNames()) {
         RCLCPP_DEBUG(get_logger(), "Socket %d - %s", static_cast<int>(sensor.first), sensor.second.c_str());
     }
     // not working on OAK4 right now
     if(platform == dai::Platform::RVC2) {
-        auto ir_drivers = device->getIrDrivers();
-        if(ir_drivers.empty()) {
-            RCLCPP_DEBUG(get_logger(), "Device has no IR drivers");
-        } else {
-            RCLCPP_DEBUG(get_logger(), "IR Drivers present");
+        try {
+            const auto irDrivers = device->getIrDrivers();
+            if(irDrivers.empty()) {
+                RCLCPP_INFO(get_logger(), "Device has no IR drivers; IR controls will remain disabled.");
+            } else {
+                RCLCPP_DEBUG(get_logger(), "IR Drivers present");
+            }
+        } catch(const std::exception& e) {
+            RCLCPP_WARN(get_logger(), "Could not query IR capabilities: %s. IR controls will remain disabled.", e.what());
         }
     }
+    return true;
 }
 
 void Driver::createPipeline() {
@@ -234,22 +331,24 @@ void Driver::createPipeline() {
 
 void Driver::setupQueues() {}
 
-void Driver::startDevice() {
+bool Driver::startDevice() {
     rclcpp::Rate r(1.0);
     while(rclcpp::ok() && !camRunning) {
-        auto deviceId = ph->getParam<std::string>("i_device_id");
-        auto ip = ph->getParam<std::string>("i_ip");
-        auto usb_id = ph->getParam<std::string>("i_usb_port_id");
+        const auto deviceId = ph->getParam<std::string>("i_device_id");
+        const auto ip = ph->getParam<std::string>("i_ip");
+        const auto usbId = ph->getParam<std::string>("i_usb_port_id");
         try {
-            if(deviceId.empty() && ip.empty() && usb_id.empty()) {
+            if(deviceId.empty() && ip.empty() && usbId.empty()) {
                 RCLCPP_INFO(get_logger(), "No ip/ID specified, connecting to the next available device.");
-                auto info = dai::Device::getAnyAvailableDevice();
-                auto speed = ph->getUSBSpeed();
-                device = std::make_shared<dai::Device>(std::get<1>(info), speed);
+                const auto [found, info] = dai::Device::getAnyAvailableDevice();
+                if(!found) {
+                    throw std::runtime_error("No available devices detected.");
+                }
+                device = std::make_shared<dai::Device>(info, ph->getUSBSpeed());
                 camRunning = true;
             } else {
-                std::vector<dai::DeviceInfo> availableDevices = dai::Device::getAllAvailableDevices();
-                if(availableDevices.size() == 0) {
+                auto availableDevices = dai::Device::getAllConnectedDevices();
+                if(availableDevices.empty()) {
                     // autodiscovery might not work so try connecting via IP directly if set
                     if(!ip.empty()) {
                         dai::DeviceInfo info(ip);
@@ -259,60 +358,95 @@ void Driver::startDevice() {
                         throw std::runtime_error("No devices detected!");
                     }
                 }
-                dai::UsbSpeed speed = ph->getUSBSpeed();
+                const auto speed = ph->getUSBSpeed();
+                bool matchingDeviceFound = false;
                 for(const auto& info : availableDevices) {
                     if(!deviceId.empty() && info.getDeviceId() == deviceId) {
+                        matchingDeviceFound = true;
                         RCLCPP_INFO(get_logger(), "Connecting to the device using ID: %s", deviceId.c_str());
-                        if(info.state == X_LINK_UNBOOTED || info.state == X_LINK_BOOTLOADER || info.state == X_LINK_GATE) {
+                        if(isConnectableState(info.state)) {
                             device = std::make_shared<dai::Device>(info, speed);
                             camRunning = true;
-                        } else if(info.state == X_LINK_BOOTED || info.state == X_LINK_GATE_BOOTED) {
+                        } else if(isBootedState(info.state)) {
                             throw std::runtime_error("Device is already booted in different process.");
+                        } else {
+                            throw std::runtime_error("Device is in an unsupported connection state.");
                         }
                     } else if(!ip.empty() && info.name == ip) {
+                        matchingDeviceFound = true;
                         RCLCPP_INFO(get_logger(), "Connecting to the device using ip: %s", ip.c_str());
-                        if(info.state == X_LINK_UNBOOTED || info.state == X_LINK_BOOTLOADER || info.state == X_LINK_GATE) {
+                        if(isConnectableState(info.state)) {
                             device = std::make_shared<dai::Device>(info);
                             camRunning = true;
-                        } else if(info.state == X_LINK_BOOTED || info.state == X_LINK_GATE_BOOTED) {
-                            throw std::runtime_error("Device is already booted in different process...");
+                        } else if(isBootedState(info.state)) {
+                            throw std::runtime_error("Device is already booted in different process.");
+                        } else {
+                            throw std::runtime_error("Device is in an unsupported connection state.");
                         }
-                    } else if(!usb_id.empty() && info.name == usb_id) {
-                        RCLCPP_INFO(get_logger(), "Connecting to the device using USB ID: %s", usb_id.c_str());
-                        if(info.state == X_LINK_UNBOOTED || info.state == X_LINK_BOOTLOADER || info.state == X_LINK_GATE) {
+                    } else if(!usbId.empty() && info.name == usbId) {
+                        matchingDeviceFound = true;
+                        RCLCPP_INFO(get_logger(), "Connecting to the device using USB ID: %s", usbId.c_str());
+                        if(isConnectableState(info.state)) {
                             device = std::make_shared<dai::Device>(info, speed);
                             camRunning = true;
-                        } else if(info.state == X_LINK_BOOTED || info.state == X_LINK_GATE_BOOTED) {
+                        } else if(isBootedState(info.state)) {
                             throw std::runtime_error("Device is already booted in different process.");
+                        } else {
+                            throw std::runtime_error("Device is in an unsupported connection state.");
                         }
-                    } else {
-                        RCLCPP_INFO(get_logger(), "Ignoring device info: ID: %s, Name: %s", info.getDeviceId().c_str(), info.name.c_str());
+                    }
+                    if(camRunning) {
+                        break;
                     }
                 }
+                if(!matchingDeviceFound) {
+                    throw std::runtime_error("The requested device was not found.");
+                }
             }
-        } catch(const std::runtime_error& e) {
+        } catch(const std::exception& e) {
+            device.reset();
+            camRunning = false;
             RCLCPP_ERROR(get_logger(), "%s", e.what());
         }
-        r.sleep();
+        if(!camRunning) {
+            r.sleep();
+        }
+    }
+
+    if(!camRunning || !device) {
+        return false;
     }
 
     RCLCPP_INFO(get_logger(), "Driver with ID: %s and Name: %s connected!", device->getDeviceId().c_str(), device->getDeviceInfo().name.c_str());
     auto protocol = device->getDeviceInfo().getXLinkDeviceDesc().protocol;
 
     if(protocol != XLinkProtocol_t::X_LINK_TCP_IP) {
-        auto speed = usbStrings[static_cast<int32_t>(device->getUsbSpeed())];
+        const auto usbSpeed = device->getUsbSpeed();
+        const auto speedIndex = static_cast<int32_t>(usbSpeed);
+        const auto speed = speedIndex >= 0 && static_cast<size_t>(speedIndex) < usbStrings.size() ? usbStrings[speedIndex] : "UNKNOWN";
         RCLCPP_INFO(get_logger(), "USB SPEED: %s", speed.c_str());
+        if(usbSpeed == dai::UsbSpeed::LOW || usbSpeed == dai::UsbSpeed::FULL || usbSpeed == dai::UsbSpeed::HIGH) {
+            RCLCPP_WARN(get_logger(),
+                        "Device is connected over USB2. The default RGBD profile is supported, but additional streams may require lower FPS or low-bandwidth "
+                        "encoding.");
+        }
     } else {
         RCLCPP_INFO(get_logger(),
                     "PoE device detected. Consider enabling low bandwidth for specific image topics (see "
                     "Readme->DepthAI ROS Driver->Specific device configurations).");
     }
+    return true;
 }
 
 void Driver::setIR() {
     bool hasIR = true;
     if(platform == dai::Platform::RVC2) {
-        hasIR = !device->getIrDrivers().empty();
+        try {
+            hasIR = !device->getIrDrivers().empty();
+        } catch(const std::exception& e) {
+            hasIR = false;
+            RCLCPP_WARN(get_logger(), "Could not query IR capabilities: %s. IR controls will remain disabled.", e.what());
+        }
     }
     if(ph->getParam<bool>("i_enable_ir") && hasIR) {
         float laserdotIntensity = ph->getParam<float>("r_laser_dot_intensity");
@@ -323,24 +457,39 @@ void Driver::setIR() {
 }
 
 rcl_interfaces::msg::SetParametersResult Driver::parameterCB(const std::vector<rclcpp::Parameter>& params) {
-    for(const auto& p : params) {
-        bool hasIR = true;
-        if(platform == dai::Platform::RVC2) {
-            hasIR = !device->getIrDrivers().empty();
-        }
-        if(ph->getParam<bool>("i_enable_ir") && hasIR) {
-            if(p.get_name() == ph->getFullParamName("r_laser_dot_intensity")) {
-                float laserdotIntensity = p.get_value<float>();
-                device->setIrLaserDotProjectorIntensity(laserdotIntensity);
-            } else if(p.get_name() == ph->getFullParamName("r_floodlight_intensity")) {
-                float floodlightIntensity = p.get_value<float>();
-                device->setIrFloodLightIntensity(floodlightIntensity);
-            }
-        }
-    }
-    generator->updateParams(params);
     rcl_interfaces::msg::SetParametersResult res;
     res.successful = true;
+    if(!camRunning || !device || !generator) {
+        RCLCPP_DEBUG(get_logger(), "Driver is not running; parameter changes will be applied on next start.");
+        return res;
+    }
+    try {
+        bool hasIR = true;
+        if(platform == dai::Platform::RVC2) {
+            try {
+                hasIR = !device->getIrDrivers().empty();
+            } catch(const std::exception& e) {
+                hasIR = false;
+                RCLCPP_WARN(get_logger(), "Could not query IR capabilities: %s. IR controls will remain disabled.", e.what());
+            }
+        }
+        for(const auto& p : params) {
+            if(ph->getParam<bool>("i_enable_ir") && hasIR) {
+                if(p.get_name() == ph->getFullParamName("r_laser_dot_intensity")) {
+                    const float laserdotIntensity = p.get_value<float>();
+                    device->setIrLaserDotProjectorIntensity(laserdotIntensity);
+                } else if(p.get_name() == ph->getFullParamName("r_floodlight_intensity")) {
+                    const float floodlightIntensity = p.get_value<float>();
+                    device->setIrFloodLightIntensity(floodlightIntensity);
+                }
+            }
+        }
+        generator->updateParams(params);
+    } catch(const std::exception& e) {
+        RCLCPP_ERROR(get_logger(), "Parameter update failed: %s", e.what());
+        res.successful = false;
+        res.reason = e.what();
+    }
     return res;
 }
 

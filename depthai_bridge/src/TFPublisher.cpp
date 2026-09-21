@@ -223,22 +223,16 @@ std::string TFPublisher::prepareXacroArgs() {
 }
 
 void TFPublisher::convertModelName() {
-    std::map<std::string, std::string> modelMappings = {{"OAK-D-SR-POE", "OAK-D-SR-POE"},
-                                                        {"OAK-D-PRO-W-POE", "OAK-D-S2-POE"},
-                                                        {"OAK-D-PRO-POE", "OAK-D-S2-POE"},
-                                                        {"OAK-D-S2-POE", "OAK-D-S2-POE"},
-                                                        {"OAK-D-POE", "OAK-D-POE"},
-                                                        {"OAK-D-LITE", "OAK-D-PRO"},
-                                                        {"OAK-D-S2", "OAK-D-PRO"},
-                                                        {"OAK-D-PRO-W", "OAK-D-PRO"},
-                                                        {"OAK-D-PRO", "OAK-D-PRO"},
-                                                        {"OAK-D-W", "OAK-D-S2"},
-                                                        {"OAK-D", "OAK-D"},
-                                                        {"OAK-T", "OAK-T"},
-                                                        {"OAK-4-PRO", "OAK4-D"},
-                                                        {"OAK-4-PRO-W", "OAK4-D"},
-                                                        {"OAK4-D-W", "OAK4-D"},
-                                                        {"OAK4-D-PRO", "OAK4-D"}};
+    camModel = normalizeDeviceModelName(camModel);
+    const std::map<std::string, std::string> modelMappings = {{"OAK-D-CM4", "OAK-D-CM4-POE"},
+                                                              {"OAK-D-PRO-W-POE", "OAK-D-S2-POE"},
+                                                              {"OAK-D-PRO-POE", "OAK-D-S2-POE"},
+                                                              {"OAK-D-W-POE", "OAK-D-S2-POE"},
+                                                              {"OAK-D-W", "OAK-D-S2"},
+                                                              {"OAK-4-PRO", "OAK4-D"},
+                                                              {"OAK-4-PRO-W", "OAK4-D"},
+                                                              {"OAK4-D-W", "OAK4-D"},
+                                                              {"OAK4-D-PRO", "OAK4-D"}};
 
     for(const auto& [key, value] : modelMappings) {
         if(camModel == key) {

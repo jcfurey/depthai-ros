@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -10,6 +11,7 @@
 #include "depthai_ros_driver/pipeline/pipeline_generator.hpp"
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "rclcpp/callback_group.hpp"
+#include "rclcpp/context.hpp"
 #include "rclcpp/node.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
@@ -24,9 +26,7 @@ using Trigger = std_srvs::srv::Trigger;
 class Driver : public rclcpp::Node {
    public:
     explicit Driver(const rclcpp::NodeOptions& options);
-    ~Driver() {
-        stop();
-    };
+    ~Driver();
     /**
      * @brief Creates the pipeline and starts the device. Also sets up parameter callback and services.
      */
@@ -35,16 +35,18 @@ class Driver : public rclcpp::Node {
    private:
     /**
      * @brief      Print information about the device type.
+     * @return     false if shutdown was requested before a device was found.
      */
-    void getDeviceType();
+    bool getDeviceType();
     /**
      * @brief      Create the pipeline by using PipelineGenerator.
      */
     void createPipeline();
     /**
-     * @brief      Connect either to a first available device or to a device with a specific USB port, MXID or IP. Loops continuously until a device is found.
+     * @brief      Connect either to a first available device or to a device with a specific USB port, MXID or IP.
+     * @return     false if shutdown was requested before a device was found.
      */
-    void startDevice();
+    bool startDevice();
     /**
      * @brief      Sets up the queues and creates publishers for the nodes in the pipeline.
      */
@@ -72,14 +74,17 @@ class Driver : public rclcpp::Node {
     rclcpp::Service<Trigger>::SharedPtr startSrv, stopSrv, savePipelineSrv, saveCalibSrv;
     rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagSub;
     /*
-     * Closes all the queues, clears the configured BaseNodes, stops the pipeline and resets the device.
+     * Closes all the queues, clears the configured BaseNodes, stops the pipeline and resets the device. Thread-safe.
      */
     void stop();
     /*
-     * Runs onConfigure();
+     * Runs onConfigure(); Thread-safe.
      */
     void start();
     void restart();
+    // Unsynchronized implementations; callers must hold lifecycleMtx.
+    void stopImpl();
+    void startImpl();
     void diagCB(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg);
 
     void startCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response::SharedPtr res);
@@ -97,5 +102,8 @@ class Driver : public rclcpp::Node {
     std::unique_ptr<depthai_bridge::TFPublisher> tfPub;
     rclcpp::TimerBase::SharedPtr startTimer;
     rclcpp::CallbackGroup::SharedPtr srvGroup;
+    std::mutex lifecycleMtx;
+    rclcpp::Context::SharedPtr rclContext;
+    rclcpp::OnShutdownCallbackHandle shutdownCBHandle;
 };
 }  // namespace depthai_ros_driver
