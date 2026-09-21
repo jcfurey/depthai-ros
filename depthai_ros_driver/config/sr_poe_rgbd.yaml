@@ -1,4 +1,4 @@
-/oak:
+/**:
   ros__parameters:
     driver:
       i_enable_ir: false

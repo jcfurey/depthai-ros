@@ -53,6 +53,9 @@ class PipelineGenerator {
      */
     void createPipeline(std::shared_ptr<rclcpp::Node> node, std::shared_ptr<dai::Device> device, std::shared_ptr<dai::Pipeline> pipeline, bool rsCompat);
 
+    /** Close all host queues and detach their callbacks before stopping the device pipeline. */
+    void closeQueues();
+
     void updateParams(const std::vector<rclcpp::Parameter>& params);
 
    protected:
@@ -63,6 +66,8 @@ class PipelineGenerator {
     std::shared_ptr<param_handlers::PipelineGenParamHandler> ph;
     std::shared_ptr<pluginlib::ClassLoader<BasePipeline>> pipelineLoader;
     std::vector<std::unique_ptr<dai_nodes::BaseNode>> daiNodes;
+    bool queuesReady = false;
+    bool queuesClosed = false;
 };
 }  // namespace pipeline_gen
 }  // namespace depthai_ros_driver

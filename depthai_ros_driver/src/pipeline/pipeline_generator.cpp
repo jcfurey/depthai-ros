@@ -41,7 +41,9 @@ PipelineGenerator::PipelineGenerator()
                        {"THERMAL", PipelineType::Thermal}};
 }
 
-PipelineGenerator::~PipelineGenerator() = default;
+PipelineGenerator::~PipelineGenerator() {
+    closeQueues();
+}
 void PipelineGenerator::createPipeline(std::shared_ptr<rclcpp::Node> node,
                                        std::shared_ptr<dai::Device> device,
                                        std::shared_ptr<dai::Pipeline> pipeline,
@@ -104,7 +106,22 @@ void PipelineGenerator::createPipeline(std::shared_ptr<rclcpp::Node> node,
     for(const auto& node : daiNodes) {
         node->setupQueues(device);
     }
+    queuesReady = true;
     RCLCPP_INFO(node->get_logger(), "Finished setting up pipeline.");
+}
+
+void PipelineGenerator::closeQueues() {
+    if(queuesClosed || !queuesReady) {
+        return;
+    }
+    queuesClosed = true;
+    for(auto node = daiNodes.rbegin(); node != daiNodes.rend(); ++node) {
+        try {
+            (*node)->closeQueues();
+        } catch(const std::exception& e) {
+            RCLCPP_WARN((*node)->getLogger(), "Failed to close queue for %s: %s", (*node)->getName().c_str(), e.what());
+        }
+    }
 }
 
 void PipelineGenerator::updateParams(const std::vector<rclcpp::Parameter>& params) {

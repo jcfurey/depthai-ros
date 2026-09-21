@@ -25,15 +25,33 @@ bool isBootedState(XLinkDeviceState_t state) {
 
 }  // namespace
 
-Driver::Driver(const rclcpp::NodeOptions& options) : rclcpp::Node("driver", options) {
+Driver::Driver(const rclcpp::NodeOptions& options) : rclcpp::Node("oak", options) {
     //  Since we cannot use shared_from this before the object is initialized, we need to use a timer to start the device.
-    // Keep the handle so unloading a component cannot leave a shutdown callback with a dangling `this` pointer.
+    // Close DepthAI queues while ROS publishers and logging are still valid. Setting
+    // shutdownRequested first also lets a pending device-discovery loop unwind.
     rclContext = options.context();
-    shutdownCBHandle = rclContext->add_on_shutdown_callback([this]() { stop(); });
+    preShutdownCBHandle = rclContext->add_pre_shutdown_callback([this]() {
+        shutdownRequested = true;
+        try {
+            stop();
+        } catch(const std::exception& e) {
+            RCLCPP_ERROR(get_logger(), "Failed to stop driver during shutdown: %s", e.what());
+        }
+    });
     startTimer = this->create_wall_timer(std::chrono::seconds(1), [this]() {
         // Prevent starting multiple times when not using a static executor.
         if(!starting.exchange(true)) {
-            start();
+            try {
+                start();
+            } catch(const std::exception& e) {
+                RCLCPP_ERROR(get_logger(), "Driver startup failed: %s", e.what());
+                starting = false;
+                return;
+            }
+            if(!camRunning) {
+                starting = false;
+                return;
+            }
             srvGroup = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
             paramCBHandle = this->add_on_set_parameters_callback(std::bind(&Driver::parameterCB, this, std::placeholders::_1));
@@ -42,6 +60,10 @@ Driver::Driver(const rclcpp::NodeOptions& options) : rclcpp::Node("driver", opti
                 "~/start_driver", std::bind(&Driver::startCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
             stopSrv = this->create_service<Trigger>(
                 "~/stop_driver", std::bind(&Driver::stopCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
+            startAliasSrv = this->create_service<Trigger>(
+                "~/start", std::bind(&Driver::startCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
+            stopAliasSrv = this->create_service<Trigger>(
+                "~/stop", std::bind(&Driver::stopCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
             savePipelineSrv = this->create_service<Trigger>(
                 "~/save_pipeline", std::bind(&Driver::savePipelineCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
             saveCalibSrv = this->create_service<Trigger>(
@@ -55,6 +77,14 @@ Driver::Driver(const rclcpp::NodeOptions& options) : rclcpp::Node("driver", opti
                                                     std::bind(&Driver::stopCB, this, std::placeholders::_1, std::placeholders::_2),
                                                     rclcpp::ServicesQoS().get_rmw_qos_profile(),
                                                     srvGroup);
+            startAliasSrv = this->create_service<Trigger>("~/start",
+                                                          std::bind(&Driver::startCB, this, std::placeholders::_1, std::placeholders::_2),
+                                                          rclcpp::ServicesQoS().get_rmw_qos_profile(),
+                                                          srvGroup);
+            stopAliasSrv = this->create_service<Trigger>("~/stop",
+                                                         std::bind(&Driver::stopCB, this, std::placeholders::_1, std::placeholders::_2),
+                                                         rclcpp::ServicesQoS().get_rmw_qos_profile(),
+                                                         srvGroup);
             savePipelineSrv = this->create_service<Trigger>("~/save_pipeline",
                                                             std::bind(&Driver::savePipelineCB, this, std::placeholders::_1, std::placeholders::_2),
                                                             rclcpp::ServicesQoS().get_rmw_qos_profile(),
@@ -75,8 +105,9 @@ Driver::Driver(const rclcpp::NodeOptions& options) : rclcpp::Node("driver", opti
 
 Driver::~Driver() {
     if(rclContext) {
-        rclContext->remove_on_shutdown_callback(shutdownCBHandle);
+        rclContext->remove_pre_shutdown_callback(preShutdownCBHandle);
     }
+    shutdownRequested = true;
     stop();
 }
 
@@ -87,6 +118,7 @@ void Driver::onConfigure() {
         RCLCPP_WARN(get_logger(), "Shutdown requested before a device was found, aborting startup.");
         return;
     }
+    configureTransportDefaults();
     createPipeline();
     setupQueues();
     setIR();
@@ -121,8 +153,9 @@ void Driver::onConfigure() {
         }
     }
     pipeline->start();
+    camRunning = true;
     const auto* rosDistro = std::getenv("ROS_DISTRO");
-    RCLCPP_WARN(get_logger(),
+    RCLCPP_INFO(get_logger(),
                 "If you detect any issues with %s release, please report "
                 "issues to GH: https://github.com/luxonis/depthai-ros/issues/719",
                 rosDistro != nullptr ? rosDistro : "the current ROS");
@@ -148,10 +181,15 @@ void Driver::start() {
 
 void Driver::startImpl() {
     RCLCPP_INFO(this->get_logger(), "Starting driver.");
-    if(!camRunning) {
+    if(camRunning) {
+        RCLCPP_INFO(this->get_logger(), "Driver is already running.");
+        return;
+    }
+    try {
         onConfigure();
-    } else {
-        RCLCPP_INFO(this->get_logger(), "Driver already running!.");
+    } catch(...) {
+        stopImpl();
+        throw;
     }
 }
 
@@ -161,25 +199,42 @@ void Driver::stop() {
 }
 
 void Driver::stopImpl() {
-    if(camRunning) {
+    const bool hadResources = camRunning || generator || pipeline || device || tfPub;
+    if(!hadResources) {
         if(rclcpp::ok()) {
-            RCLCPP_INFO(get_logger(), "Stopping driver.");
+            RCLCPP_INFO(get_logger(), "Driver is already stopped.");
         }
-        if(pipeline) {
+        return;
+    }
+
+    if(rclcpp::ok()) {
+        RCLCPP_INFO(get_logger(), "Stopping driver.");
+    }
+    if(generator) {
+        try {
+            generator->closeQueues();
+        } catch(const std::exception& e) {
+            if(rclcpp::ok()) {
+                RCLCPP_WARN(get_logger(), "Failed to close driver queues: %s", e.what());
+            }
+        }
+    }
+    if(pipeline) {
+        try {
             pipeline->stop();
+        } catch(const std::exception& e) {
+            if(rclcpp::ok()) {
+                RCLCPP_WARN(get_logger(), "Failed to stop the DepthAI pipeline: %s", e.what());
+            }
         }
-        tfPub.reset();
-        generator.reset();
-        pipeline.reset();
-        device.reset();
-        camRunning = false;
-        if(rclcpp::ok()) {
-            RCLCPP_INFO(get_logger(), "Driver stopped!");
-        }
-    } else {
-        if(rclcpp::ok()) {
-            RCLCPP_INFO(get_logger(), "Driver already stopped!");
-        }
+    }
+    tfPub.reset();
+    generator.reset();
+    pipeline.reset();
+    device.reset();
+    camRunning = false;
+    if(rclcpp::ok()) {
+        RCLCPP_INFO(get_logger(), "Driver stopped!");
     }
 }
 
@@ -248,7 +303,9 @@ void Driver::startCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Respons
     try {
         start();
         res->success = camRunning;
-        if(!camRunning) {
+        if(camRunning) {
+            res->message = "Driver started.";
+        } else {
             res->message = "Driver did not start; check the logs for details.";
         }
     } catch(const std::exception& e) {
@@ -261,6 +318,7 @@ void Driver::stopCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response
     try {
         stop();
         res->success = true;
+        res->message = "Driver stopped.";
     } catch(const std::exception& e) {
         RCLCPP_ERROR(get_logger(), "Stopping driver failed: %s", e.what());
         res->success = false;
@@ -311,6 +369,51 @@ bool Driver::getDeviceType() {
     return true;
 }
 
+void Driver::configureTransportDefaults() {
+    const auto requestedProfile = utils::getUpperCaseStr(ph->getParam<std::string>("i_transport_profile"));
+    bool lowBandwidth = false;
+    if(requestedProfile == "AUTO") {
+        lowBandwidth = constrainedTransport;
+    } else if(requestedProfile == "LOW_BANDWIDTH" || requestedProfile == "LOW-BANDWIDTH" || requestedProfile == "COMPRESSED") {
+        lowBandwidth = true;
+    } else if(requestedProfile != "RAW") {
+        throw std::invalid_argument("Invalid driver.i_transport_profile value '" + requestedProfile + "'. Use AUTO, RAW, or LOW_BANDWIDTH.");
+    }
+
+    // Declare shared stream parameters early so the transport-aware default is
+    // visible to all built-in pipelines. Explicit YAML/CLI overrides still win.
+    static const std::vector<std::string> streamNames = {"rgb", "color", "left", "right", "stereo", "depth", "infra1", "infra2", "tof", "thermal"};
+    const auto& parameterOverrides = get_node_parameters_interface()->get_parameter_overrides();
+    for(const auto& streamName : streamNames) {
+        const auto parameterName = streamName + ".i_low_bandwidth";
+        if(!has_parameter(parameterName)) {
+            declare_parameter<bool>(parameterName, lowBandwidth);
+            if(parameterOverrides.count(parameterName) == 0) {
+                transportManagedParams.insert(parameterName);
+            }
+        } else if(transportManagedParams.count(parameterName) != 0) {
+            set_parameter(rclcpp::Parameter(parameterName, lowBandwidth));
+        }
+    }
+
+    if(lowBandwidth) {
+        RCLCPP_INFO(get_logger(),
+                    "Image transport profile: LOW_BANDWIDTH%s. Device-side encoding is the default for published image streams; explicit per-stream "
+                    "overrides still apply.",
+                    requestedProfile == "AUTO" ? " (selected automatically for PoE/USB2)" : "");
+        RCLCPP_INFO(get_logger(),
+                    "When low-bandwidth encoding is applied to stereo, it uses integer disparity; select RAW or override stereo.i_low_bandwidth:=false if "
+                    "subpixel depth is required.");
+    } else {
+        RCLCPP_INFO(get_logger(), "Image transport profile: RAW%s.", requestedProfile == "AUTO" ? " (selected automatically for USB3)" : "");
+        if(constrainedTransport) {
+            RCLCPP_WARN(get_logger(),
+                        "RAW image transport was selected on PoE/USB2 and may reduce frame rate. Use driver.i_transport_profile:=LOW_BANDWIDTH for full-rate "
+                        "streaming.");
+        }
+    }
+}
+
 void Driver::createPipeline() {
     generator = std::make_unique<pipeline_gen::PipelineGenerator>();
     const auto autoCalibrationMode = ph->getPipelineAutoCalibrationMode();
@@ -333,7 +436,7 @@ void Driver::setupQueues() {}
 
 bool Driver::startDevice() {
     rclcpp::Rate r(1.0);
-    while(rclcpp::ok() && !camRunning) {
+    while(rclcpp::ok() && !shutdownRequested && !device) {
         const auto deviceId = ph->getParam<std::string>("i_device_id");
         const auto ip = ph->getParam<std::string>("i_ip");
         const auto usbId = ph->getParam<std::string>("i_usb_port_id");
@@ -345,7 +448,6 @@ bool Driver::startDevice() {
                     throw std::runtime_error("No available devices detected.");
                 }
                 device = std::make_shared<dai::Device>(info, ph->getUSBSpeed());
-                camRunning = true;
             } else {
                 auto availableDevices = dai::Device::getAllConnectedDevices();
                 if(availableDevices.empty()) {
@@ -366,7 +468,6 @@ bool Driver::startDevice() {
                         RCLCPP_INFO(get_logger(), "Connecting to the device using ID: %s", deviceId.c_str());
                         if(isConnectableState(info.state)) {
                             device = std::make_shared<dai::Device>(info, speed);
-                            camRunning = true;
                         } else if(isBootedState(info.state)) {
                             throw std::runtime_error("Device is already booted in different process.");
                         } else {
@@ -377,7 +478,6 @@ bool Driver::startDevice() {
                         RCLCPP_INFO(get_logger(), "Connecting to the device using ip: %s", ip.c_str());
                         if(isConnectableState(info.state)) {
                             device = std::make_shared<dai::Device>(info);
-                            camRunning = true;
                         } else if(isBootedState(info.state)) {
                             throw std::runtime_error("Device is already booted in different process.");
                         } else {
@@ -388,14 +488,13 @@ bool Driver::startDevice() {
                         RCLCPP_INFO(get_logger(), "Connecting to the device using USB ID: %s", usbId.c_str());
                         if(isConnectableState(info.state)) {
                             device = std::make_shared<dai::Device>(info, speed);
-                            camRunning = true;
                         } else if(isBootedState(info.state)) {
                             throw std::runtime_error("Device is already booted in different process.");
                         } else {
                             throw std::runtime_error("Device is in an unsupported connection state.");
                         }
                     }
-                    if(camRunning) {
+                    if(device) {
                         break;
                     }
                 }
@@ -405,20 +504,20 @@ bool Driver::startDevice() {
             }
         } catch(const std::exception& e) {
             device.reset();
-            camRunning = false;
             RCLCPP_ERROR(get_logger(), "%s", e.what());
         }
-        if(!camRunning) {
+        if(!device) {
             r.sleep();
         }
     }
 
-    if(!camRunning || !device) {
+    if(!device) {
         return false;
     }
 
     RCLCPP_INFO(get_logger(), "Driver with ID: %s and Name: %s connected!", device->getDeviceId().c_str(), device->getDeviceInfo().name.c_str());
-    auto protocol = device->getDeviceInfo().getXLinkDeviceDesc().protocol;
+    const auto protocol = device->getDeviceInfo().getXLinkDeviceDesc().protocol;
+    constrainedTransport = protocol == XLinkProtocol_t::X_LINK_TCP_IP;
 
     if(protocol != XLinkProtocol_t::X_LINK_TCP_IP) {
         const auto usbSpeed = device->getUsbSpeed();
@@ -426,14 +525,11 @@ bool Driver::startDevice() {
         const auto speed = speedIndex >= 0 && static_cast<size_t>(speedIndex) < usbStrings.size() ? usbStrings[speedIndex] : "UNKNOWN";
         RCLCPP_INFO(get_logger(), "USB SPEED: %s", speed.c_str());
         if(usbSpeed == dai::UsbSpeed::LOW || usbSpeed == dai::UsbSpeed::FULL || usbSpeed == dai::UsbSpeed::HIGH) {
-            RCLCPP_WARN(get_logger(),
-                        "Device is connected over USB2. The default RGBD profile is supported, but additional streams may require lower FPS or low-bandwidth "
-                        "encoding.");
+            constrainedTransport = true;
+            RCLCPP_INFO(get_logger(), "USB2 device detected; AUTO transport will use low-bandwidth image streams.");
         }
     } else {
-        RCLCPP_INFO(get_logger(),
-                    "PoE device detected. Consider enabling low bandwidth for specific image topics (see "
-                    "Readme->DepthAI ROS Driver->Specific device configurations).");
+        RCLCPP_INFO(get_logger(), "PoE device detected; AUTO transport will use low-bandwidth image streams.");
     }
     return true;
 }

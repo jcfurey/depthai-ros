@@ -116,13 +116,13 @@ class TestDriverLaunch(unittest.TestCase):
         )
 
     def test_published_imu_messages(self, proc_output):
-        self.testHelper.testIncomingMessages(Imu, "/oak/imu/data_raw")
+        self.assertTrue(self.testHelper.testIncomingMessages(Imu, "/oak/imu/data"))
 
     def test_stop_start_camera(self, proc_output):
-        self.assertTrue(self.testHelper.testTriggerService("/oak/stop_driver"))
+        self.assertTrue(self.testHelper.testTriggerService("/oak/stop"))
         proc_output.assertWaitFor("Driver stopped!", timeout=10.0, stream="stderr")
 
-        self.assertTrue(self.testHelper.testTriggerService("/oak/start_driver"))
+        self.assertTrue(self.testHelper.testTriggerService("/oak/start"))
         proc_output.assertWaitFor("Driver ready!", timeout=10.0, stream="stderr")
 
     def test_save_calibration(self, proc_output):

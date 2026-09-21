@@ -2,16 +2,14 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import (
-    DeclareLaunchArgument,
-    IncludeLaunchDescription,
-    OpaqueFunction,
-)
-from launch.conditions import IfCondition
-from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import ComposableNodeContainer, LoadComposableNodes, Node
+from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
+from depthai_ros_driver.launch_utils import (
+    declare_device_arguments,
+    image_transport_parameters,
+)
 
 
 def launch_setup(context, *args, **kwargs):
@@ -20,14 +18,14 @@ def launch_setup(context, *args, **kwargs):
         log_level = "debug"
 
     params_file = LaunchConfiguration("params_file")
-    depthai_prefix = get_package_share_directory("depthai_ros_driver")
 
     name = LaunchConfiguration("name").perform(context)
+    namespace = LaunchConfiguration("namespace").perform(context)
     tf_prefix = LaunchConfiguration("tf_prefix").perform(context)
     tf_prefix = tf_prefix.strip("/") or name
-    rgb_topic_name = name + "/rgb/image_raw"
-    if LaunchConfiguration("rectify_rgb").perform(context) == "true":
-        rgb_topic_name = name + "/rgb/image_rect"
+    use_intra_process = (
+        LaunchConfiguration("use_intra_process").perform(context).lower() == "true"
+    )
 
     parent_frame = LaunchConfiguration("parent_frame", default="oak_parent_frame")
     cam_pos_x = LaunchConfiguration("cam_pos_x", default="0.0")
@@ -36,7 +34,6 @@ def launch_setup(context, *args, **kwargs):
     cam_roll = LaunchConfiguration("cam_roll", default="0.0")
     cam_pitch = LaunchConfiguration("cam_pitch", default="0.0")
     cam_yaw = LaunchConfiguration("cam_yaw", default="0.0")
-    use_composition = LaunchConfiguration("rsp_use_composition", default="false")
     camera_model = LaunchConfiguration("camera_model", default="OAK-D")
     imu_from_descr = LaunchConfiguration("imu_from_descr", default="false")
     publish_tf_from_calibration = LaunchConfiguration(
@@ -45,6 +42,19 @@ def launch_setup(context, *args, **kwargs):
     override_cam_model = LaunchConfiguration("override_cam_model", default="false")
 
     tf_params = {"driver": {"i_tf_prefix": tf_prefix}}
+    connection_arguments = {
+        "i_ip": LaunchConfiguration("device_ip").perform(context),
+        "i_device_id": LaunchConfiguration("device_id").perform(context),
+        "i_usb_port_id": LaunchConfiguration("usb_port_id").perform(context),
+        "i_transport_profile": LaunchConfiguration("transport_profile").perform(context),
+    }
+    tf_params["driver"].update(
+        {key: value for key, value in connection_arguments.items() if value}
+    )
+    ffmpeg_gop_size = int(
+        LaunchConfiguration("image_transport_ffmpeg_gop_size").perform(context)
+    )
+    tf_params.update(image_transport_parameters(name, ffmpeg_gop_size))
     if publish_tf_from_calibration.perform(context) == "true":
         cam_model = ""
         if override_cam_model.perform(context) == "true":
@@ -71,7 +81,7 @@ def launch_setup(context, *args, **kwargs):
     return [
         ComposableNodeContainer(
             name=name + "_container",
-            namespace="",
+            namespace=namespace,
             package="rclcpp_components",
             executable="component_container",
             composable_node_descriptions=[
@@ -79,10 +89,20 @@ def launch_setup(context, *args, **kwargs):
                     package="depthai_ros_driver",
                     plugin="depthai_ros_driver::Driver",
                     name=name,
+                    namespace=namespace,
                     parameters=[params_file, tf_params],
+                    extra_arguments=[
+                        {"use_intra_process_comms": use_intra_process}
+                    ],
                 )
             ],
-            arguments=["--ros-args", "--log-level", log_level],
+            arguments=[
+                "--executor-type",
+                "multi-threaded",
+                "--ros-args",
+                "--log-level",
+                log_level,
+            ],
             output="both",
         ),
     ]
@@ -92,6 +112,7 @@ def generate_launch_description():
     depthai_prefix = get_package_share_directory("depthai_ros_driver")
     declared_arguments = [
         DeclareLaunchArgument("name", default_value="oak"),
+        DeclareLaunchArgument("namespace", default_value=""),
         DeclareLaunchArgument(
             "tf_prefix",
             default_value="",
@@ -109,8 +130,10 @@ def generate_launch_description():
             "params_file",
             default_value=os.path.join(depthai_prefix, "config", "rgbd.yaml"),
         ),
-        DeclareLaunchArgument("rectify_rgb", default_value="False"),
-        DeclareLaunchArgument("rsp_use_composition", default_value="false"),
+        DeclareLaunchArgument("use_intra_process", default_value="true"),
+        DeclareLaunchArgument(
+            "image_transport_ffmpeg_gop_size", default_value="1"
+        ),
         DeclareLaunchArgument(
             "publish_tf_from_calibration",
             default_value="false",
@@ -126,7 +149,7 @@ def generate_launch_description():
             default_value="false",
             description="Overrides camera model from calibration file.",
         ),
-    ]
+    ] + declare_device_arguments()
 
     return LaunchDescription(
         declared_arguments + [OpaqueFunction(function=launch_setup)]

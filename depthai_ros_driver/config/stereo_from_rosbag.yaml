@@ -1,4 +1,4 @@
-/oak:
+/**:
   ros__parameters:
     driver:
       i_external_calibration_path: '/tmp/calibration.json'

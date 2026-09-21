@@ -10,13 +10,16 @@ from launch.actions import (
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import ComposableNodeContainer, LoadComposableNodes, Node
+from launch_ros.actions import ComposableNodeContainer, Node
 from launch_ros.descriptions import ComposableNode, ParameterFile
-from launch.events import Shutdown
+from depthai_ros_driver.launch_utils import (
+    declare_camera_arguments,
+    image_transport_parameters,
+)
 
 
 def is_launch_config_true(context, name):
-    return LaunchConfiguration(name).perform(context) == "true"
+    return LaunchConfiguration(name).perform(context).lower() == "true"
 
 
 def setup_launch_prefix(context, *args, **kwargs):
@@ -28,19 +31,18 @@ def setup_launch_prefix(context, *args, **kwargs):
     )
     use_perf = LaunchConfiguration("use_perf", default="false")
 
-    launch_prefix = ""
+    launch_prefix = []
 
     if use_gdb.perform(context) == "true":
-        launch_prefix += "xterm -e gdb -ex run --args"
+        launch_prefix.append("xterm -e gdb -ex run --args")
     if use_valgrind.perform(context) == "true":
-        launch_prefix += f"valgrind {valgrind_args.perform(context)}"
-        print(launch_prefix)
+        launch_prefix.append(f"valgrind {valgrind_args.perform(context)}")
     if use_perf.perform(context) == "true":
-        launch_prefix += (
+        launch_prefix.append(
             "perf record -g --call-graph dwarf --output=perf.out.node_name.data --"
         )
 
-    return launch_prefix
+    return " ".join(launch_prefix)
 
 
 def launch_setup(context, *args, **kwargs):
@@ -74,6 +76,7 @@ def launch_setup(context, *args, **kwargs):
     namespace = LaunchConfiguration("namespace", default="").perform(context)
     name = LaunchConfiguration("name").perform(context)
     tf_prefix = LaunchConfiguration("tf_prefix").perform(context)
+    use_intra_process = is_launch_config_true(context, "use_intra_process")
 
     # If RealSense compatibility is enabled, we need to override some parameters, topics and node names
     parameter_overrides = {}
@@ -149,6 +152,15 @@ def launch_setup(context, *args, **kwargs):
     tf_prefix = tf_prefix.strip("/") or name
 
     params = {"driver": {"i_tf_prefix": tf_prefix}}
+    connection_arguments = {
+        "i_ip": LaunchConfiguration("device_ip").perform(context),
+        "i_device_id": LaunchConfiguration("device_id").perform(context),
+        "i_usb_port_id": LaunchConfiguration("usb_port_id").perform(context),
+        "i_transport_profile": LaunchConfiguration("transport_profile").perform(context),
+    }
+    params["driver"].update(
+        {key: value for key, value in connection_arguments.items() if value}
+    )
     if publish_tf_from_calibration.perform(context) == "true":
         cam_model = ""
         if override_cam_model.perform(context) == "true":
@@ -175,15 +187,51 @@ def launch_setup(context, *args, **kwargs):
         params["pipeline_gen"] = {"i_enable_rgbd": True}
 
     launch_prefix = setup_launch_prefix(context)
+    camera_root = "/" + "/".join(
+        part.strip("/") for part in (namespace, name) if part.strip("/")
+    )
+    ffmpeg_gop_size = int(
+        LaunchConfiguration("image_transport_ffmpeg_gop_size").perform(context)
+    )
+    params.update(image_transport_parameters(name, ffmpeg_gop_size))
+    namespace_root = "/" + namespace.strip("/") if namespace.strip("/") else ""
+    resolved_points_topic = (
+        points_topic_name
+        if points_topic_name.startswith("/")
+        else f"{namespace_root}/{points_topic_name}"
+    )
+    rviz_fixed_frame = LaunchConfiguration("rviz_fixed_frame").perform(context)
+    rviz_fixed_frame = rviz_fixed_frame.strip("/") or tf_prefix
+    rviz_remappings = [
+        (f"/oak/{suffix}", f"{camera_root}/{suffix}")
+        for suffix in (
+            "rgb/image_raw",
+            "rgb/camera_info",
+            "stereo/image_raw",
+            "stereo/camera_info",
+            "imu/data",
+            "vio/odometry",
+            "nn/image_raw",
+            "nn/detections",
+            "nn/spatial_detections",
+        )
+    ]
+    rviz_remappings.append(("/oak/rgbd/points", resolved_points_topic))
 
     return [
         Node(
-            condition=IfCondition(LaunchConfiguration("use_rviz").perform(context)),
+            condition=IfCondition(LaunchConfiguration("use_rviz")),
             package="rviz2",
             executable="rviz2",
             name="rviz2",
-            output="log",
-            arguments=["-d", LaunchConfiguration("rviz_config")],
+            output="screen",
+            arguments=[
+                "-d",
+                LaunchConfiguration("rviz_config"),
+                "-f",
+                rviz_fixed_frame,
+            ],
+            remappings=rviz_remappings,
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -223,10 +271,19 @@ def launch_setup(context, *args, **kwargs):
                         params,
                         parameter_overrides,
                     ],
+                    extra_arguments=[
+                        {"use_intra_process_comms": use_intra_process},
+                    ],
                     remappings=[(f"{name}/rgbd/points", points_topic_name)],
                 )
             ],
-            arguments=["--ros-args", "--log-level", log_level],
+            arguments=[
+                "--executor-type",
+                "multi-threaded",
+                "--ros-args",
+                "--log-level",
+                log_level,
+            ],
             prefix=[launch_prefix],
             output="both",
         ),
@@ -238,14 +295,9 @@ def generate_launch_description():
 
     declared_arguments = [
         DeclareLaunchArgument("name", default_value="oak"),
-        DeclareLaunchArgument(
-            "tf_prefix",
-            default_value="",
-            description="Prefix for camera-related TF frames. Defaults to the resolved node name.",
-        ),
-        DeclareLaunchArgument("namespace", default_value=""),
+        *declare_camera_arguments(),
         DeclareLaunchArgument("parent_frame", default_value="oak_parent_frame"),
-        DeclareLaunchArgument("camera_model", default_value="OAK-D-PRO"),
+        DeclareLaunchArgument("camera_model", default_value="OAK-D"),
         DeclareLaunchArgument("cam_pos_x", default_value="0.0"),
         DeclareLaunchArgument("cam_pos_y", default_value="0.0"),
         DeclareLaunchArgument("cam_pos_z", default_value="0.0"),
@@ -257,6 +309,11 @@ def generate_launch_description():
             default_value=os.path.join(depthai_prefix, "config", "driver.yaml"),
         ),
         DeclareLaunchArgument("use_rviz", default_value="false"),
+        DeclareLaunchArgument(
+            "rviz_fixed_frame",
+            default_value="",
+            description="RViz fixed frame. Empty uses tf_prefix/name.",
+        ),
         DeclareLaunchArgument(
             "rviz_config",
             default_value=os.path.join(depthai_prefix, "config", "rviz", "rgbd.rviz"),

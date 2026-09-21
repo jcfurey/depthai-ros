@@ -90,10 +90,12 @@ class TestDriverLaunch(unittest.TestCase):
         proc_output.assertWaitFor("Driver ready!", timeout=10.0, stream="stderr")
 
     def test_published_imu_messages(self, proc_output):
-        self.testHelper.testIncomingMessages(Imu, "/oak/imu/data_raw")
+        self.assertTrue(self.testHelper.testIncomingMessages(Imu, "/oak/imu/data"))
 
     def test_published_pointcloud(self, proc_output):
-        self.testHelper.testIncomingMessages(PointCloud2, "/oak/rgbd/points")
+        self.assertTrue(
+            self.testHelper.testIncomingMessages(PointCloud2, "/oak/rgbd/points")
+        )
 
 
 @launch_testing.post_shutdown_test()

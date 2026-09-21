@@ -1,4 +1,4 @@
-/oak:
+/**:
   ros__parameters:
     pipeline_gen:
       i_nn_type: none
@@ -8,12 +8,6 @@
       i_depth_preset: DEFAULT
       # Optional disparity-to-depth override in pixels. Leave at default to use calibration.
       # i_focal_length: 860.0
-    # uncomment for better performance in RVC2 PoE devices
-    #   i_publish_topic: false
-    # rgb:
-    #   i_fps: 15.0
-    #   i_publish_topic: false
-    # left:
-    #   i_fps: 15.0
-    # right:
-    #   i_fps: 15.0
+    # AUTO transport selects device-side encoding for PoE/USB2 and raw images
+    # for USB3. Override driver.i_transport_profile when subpixel depth or a
+    # specific transport is required.

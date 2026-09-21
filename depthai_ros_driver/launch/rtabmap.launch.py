@@ -7,21 +7,26 @@ from launch.actions import (
     IncludeLaunchDescription,
     OpaqueFunction,
 )
-from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import LoadComposableNodes, Node
-from launch_ros.descriptions import ComposableNode
+from launch_ros.actions import Node
+from depthai_ros_driver.launch_utils import (
+    camera_launch_arguments,
+    declare_camera_arguments,
+)
 
 
 def launch_setup(context, *args, **kwargs):
     name = LaunchConfiguration("name").perform(context)
+    namespace = LaunchConfiguration("namespace").perform(context).strip("/")
+    camera_root = "/" + "/".join(part for part in (namespace, name) if part)
+    parent_frame = LaunchConfiguration("parent_frame").perform(context)
     depthai_prefix = get_package_share_directory("depthai_ros_driver")
 
     params_file = LaunchConfiguration("params_file")
     parameters = [
         {
-            "frame_id": "oak_parent_frame",
+            "frame_id": parent_frame,
             "subscribe_rgb": True,
             "subscribe_depth": True,
             "subscribe_odom_info": False,
@@ -33,10 +38,10 @@ def launch_setup(context, *args, **kwargs):
     ]
 
     remappings = [
-        ("rgb/image", name + "/rgb/image_raw"),
-        ("rgb/camera_info", name + "/rgb/camera_info"),
-        ("depth/image", name + "/stereo/image_raw"),
-        ("odom", name + "/vio/odometry")
+        ("rgb/image", f"{camera_root}/rgb/image_raw"),
+        ("rgb/camera_info", f"{camera_root}/rgb/camera_info"),
+        ("depth/image", f"{camera_root}/stereo/image_raw"),
+        ("odom", f"{camera_root}/vio/odometry"),
     ]
 
     return [
@@ -44,7 +49,13 @@ def launch_setup(context, *args, **kwargs):
             PythonLaunchDescriptionSource(
                 os.path.join(depthai_prefix, "launch", "driver.launch.py")
             ),
-            launch_arguments={"name": name, "params_file": params_file}.items(),
+            launch_arguments={
+                "name": name,
+                "camera_model": LaunchConfiguration("camera_model"),
+                "params_file": params_file,
+                "parent_frame": parent_frame,
+                **camera_launch_arguments(),
+            }.items(),
         ),
         Node(
                     package="rtabmap_slam",
@@ -67,11 +78,13 @@ def generate_launch_description():
     depthai_prefix = get_package_share_directory("depthai_ros_driver")
     declared_arguments = [
         DeclareLaunchArgument("name", default_value="oak"),
+        DeclareLaunchArgument("camera_model", default_value="OAK-D"),
+        DeclareLaunchArgument("parent_frame", default_value="oak_parent_frame"),
         DeclareLaunchArgument(
             "params_file",
             default_value=os.path.join(depthai_prefix, "config", "rtabmap.yaml"),
         ),
-    ]
+    ] + declare_camera_arguments()
 
     return LaunchDescription(
         declared_arguments + [OpaqueFunction(function=launch_setup)]

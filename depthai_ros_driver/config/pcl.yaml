@@ -1,4 +1,4 @@
-/oak:
+/**:
   ros__parameters:
     pipeline_gen:
       i_pipeline_type: depth
@@ -6,3 +6,6 @@
     stereo:
       i_depth_preset: DEFAULT
       i_aligned: false
+      # The depth-only pipeline publishes 16-bit depth, which cannot be fed
+      # directly to the device video encoder used by LOW_BANDWIDTH.
+      i_low_bandwidth: false

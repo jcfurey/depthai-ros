@@ -1,4 +1,4 @@
-/oak:
+/**:
   ros__parameters:
     pipeline_gen:
       i_nn_type: rgb
@@ -7,5 +7,4 @@
       i_nn_family: segmentation
       i_nn_model: luxonis/deeplab-v3-plus:256x256
       i_enable_passthrough: true
-
 

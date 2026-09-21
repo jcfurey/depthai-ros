@@ -3,6 +3,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "depthai_bridge/TFPublisher.hpp"
@@ -42,6 +43,8 @@ class Driver : public rclcpp::Node {
      * @brief      Create the pipeline by using PipelineGenerator.
      */
     void createPipeline();
+    /** Resolve AUTO/RAW/LOW_BANDWIDTH defaults after the connection type is known. */
+    void configureTransportDefaults();
     /**
      * @brief      Connect either to a first available device or to a device with a specific USB port, MXID or IP.
      * @return     false if shutdown was requested before a device was found.
@@ -71,7 +74,7 @@ class Driver : public rclcpp::Node {
     rcl_interfaces::msg::SetParametersResult parameterCB(const std::vector<rclcpp::Parameter>& params);
     OnSetParametersCallbackHandle::SharedPtr paramCBHandle;
     std::unique_ptr<param_handlers::DriverParamHandler> ph;
-    rclcpp::Service<Trigger>::SharedPtr startSrv, stopSrv, savePipelineSrv, saveCalibSrv;
+    rclcpp::Service<Trigger>::SharedPtr startSrv, stopSrv, startAliasSrv, stopAliasSrv, savePipelineSrv, saveCalibSrv;
     rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagSub;
     /*
      * Closes all the queues, clears the configured BaseNodes, stops the pipeline and resets the device. Thread-safe.
@@ -99,11 +102,14 @@ class Driver : public rclcpp::Node {
     dai::Platform platform;
     std::atomic<bool> camRunning = false;
     std::atomic<bool> starting = false;
+    std::atomic<bool> shutdownRequested = false;
+    bool constrainedTransport = false;
+    std::unordered_set<std::string> transportManagedParams;
     std::unique_ptr<depthai_bridge::TFPublisher> tfPub;
     rclcpp::TimerBase::SharedPtr startTimer;
     rclcpp::CallbackGroup::SharedPtr srvGroup;
     std::mutex lifecycleMtx;
     rclcpp::Context::SharedPtr rclContext;
-    rclcpp::OnShutdownCallbackHandle shutdownCBHandle;
+    rclcpp::PreShutdownCallbackHandle preShutdownCBHandle;
 };
 }  // namespace depthai_ros_driver

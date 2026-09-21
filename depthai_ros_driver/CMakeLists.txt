@@ -140,6 +140,7 @@ ament_export_dependencies(camera_info_manager cv_bridge depthai_bridge depthai
   diagnostic_updater std_srvs)
 
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
+install(FILES README.md DESTINATION share/${PROJECT_NAME})
 
 install(
   TARGETS ${PROJECT_NAME} ${PIPELINE_PLUGIN_LIB_NAME} ${SENSOR_LIB_NAME}
@@ -157,6 +158,10 @@ ament_python_install_package(${PROJECT_NAME})
 ament_export_include_directories(include/${PROJECT_NAME})
 
 install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
+if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(configuration_files test/test_configuration_files.py)
+endif()
 if(BUILD_TESTING AND TEST_DEPTHAI_ROS_DRIVER)
   # Integration tests
   find_package(ament_cmake_ros REQUIRED)

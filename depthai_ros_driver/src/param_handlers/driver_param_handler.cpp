@@ -43,6 +43,7 @@ void DriverParamHandler::declareParams() {
     declareAndLogParam<std::string>("i_device_id", "");
     declareAndLogParam<std::string>("i_ip", "");
     declareAndLogParam<std::string>("i_usb_port_id", "");
+    declareAndLogParam<std::string>("i_transport_profile", "AUTO");
     declareAndLogParam<bool>("i_pipeline_dump", false);
     declareAndLogParam<bool>("i_calibration_dump", false);
     declareAndLogParam<std::string>("i_external_calibration_path", "");

@@ -1,5 +1,7 @@
-/oak:
+/**:
   ros__parameters:
+    driver:
+      i_transport_profile: LOW_BANDWIDTH
     rgb:
       i_low_bandwidth: true
     left:

@@ -9,6 +9,10 @@ from launch.actions import (
 )
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from depthai_ros_driver.launch_utils import (
+    camera_launch_arguments,
+    declare_camera_arguments,
+)
 
 
 def launch_setup(context, *args, **kwargs):
@@ -23,6 +27,7 @@ def launch_setup(context, *args, **kwargs):
             ),
             launch_arguments={
                 "name": name,
+                "camera_model": LaunchConfiguration("camera_model"),
                 "params_file": params_file,
                 "parent_frame": LaunchConfiguration("parent_frame"),
                 "cam_pos_x": LaunchConfiguration("cam_pos_x"),
@@ -32,7 +37,10 @@ def launch_setup(context, *args, **kwargs):
                 "cam_pitch": LaunchConfiguration("cam_pitch"),
                 "cam_yaw": LaunchConfiguration("cam_yaw"),
                 "use_rviz": LaunchConfiguration("use_rviz"),
+                "rviz_config": LaunchConfiguration("rviz_config"),
                 "rs_compat": LaunchConfiguration("rs_compat"),
+                "rviz_fixed_frame": LaunchConfiguration("rviz_fixed_frame"),
+                **camera_launch_arguments(),
             }.items(),
         ),
     ]
@@ -59,8 +67,9 @@ def generate_launch_description():
             "rviz_config",
             default_value=os.path.join(depthai_prefix, "config", "rviz", "vio.rviz"),
         ),
+        DeclareLaunchArgument("rviz_fixed_frame", default_value="odom"),
         DeclareLaunchArgument("rs_compat", default_value="False"),
-    ]
+    ] + declare_camera_arguments()
 
     return LaunchDescription(
         declared_arguments + [OpaqueFunction(function=launch_setup)]

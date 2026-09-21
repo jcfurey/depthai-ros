@@ -9,13 +9,15 @@ from launch.actions import (
 )
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from depthai_ros_driver.launch_utils import (
+    camera_launch_arguments,
+    declare_camera_arguments,
+)
 
 
 def launch_setup(context, *args, **kwargs):
     name = LaunchConfiguration("name").perform(context)
     depthai_prefix = get_package_share_directory("depthai_ros_driver")
-    rviz_config = os.path.join(depthai_prefix, "config", "rviz", "segmentation.rviz")
-
     params_file = LaunchConfiguration("params_file")
 
     return [
@@ -25,9 +27,12 @@ def launch_setup(context, *args, **kwargs):
             ),
             launch_arguments={
                 "name": name,
+                "camera_model": LaunchConfiguration("camera_model"),
                 "params_file": params_file,
                 "use_rviz": LaunchConfiguration("use_rviz"),
-                "rviz_config": rviz_config,
+                "rviz_config": LaunchConfiguration("rviz_config"),
+                "rviz_fixed_frame": LaunchConfiguration("rviz_fixed_frame"),
+                **camera_launch_arguments(),
             }.items(),
         )
     ]
@@ -37,12 +42,20 @@ def generate_launch_description():
     depthai_prefix = get_package_share_directory("depthai_ros_driver")
     declared_arguments = [
         DeclareLaunchArgument("name", default_value="oak"),
+        DeclareLaunchArgument("camera_model", default_value="OAK-D"),
         DeclareLaunchArgument(
             "params_file",
             default_value=os.path.join(depthai_prefix, "config", "segmentation.yaml"),
         ),
         DeclareLaunchArgument("use_rviz", default_value="False"),
-    ]
+        DeclareLaunchArgument(
+            "rviz_config",
+            default_value=os.path.join(
+                depthai_prefix, "config", "rviz", "segmentation.rviz"
+            ),
+        ),
+        DeclareLaunchArgument("rviz_fixed_frame", default_value=""),
+    ] + declare_camera_arguments()
 
     return LaunchDescription(
         declared_arguments + [OpaqueFunction(function=launch_setup)]

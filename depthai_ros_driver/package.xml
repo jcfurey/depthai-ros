@@ -34,7 +34,10 @@
   <depend>pluginlib</depend>
   <depend>diagnostic_updater</depend>
   <depend>diagnostic_msgs</depend>
+  <exec_depend>depth_image_proc</exec_depend>
   <depend>ffmpeg_image_transport_msgs</depend>
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>python3-yaml</test_depend>
   <export>
     <build_type>ament_cmake</build_type>
   </export>
