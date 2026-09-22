@@ -1,5 +1,7 @@
 #include "depthai_filters/wls_filter.hpp"
 
+#include <cmath>
+#include <limits>
 #include <memory>
 
 #if __has_include("cv_bridge/cv_bridge.hpp")
@@ -15,74 +17,83 @@ WLSFilter::WLSFilter(const rclcpp::NodeOptions& options) : rclcpp::Node("wls_fil
     onInit();
 }
 void WLSFilter::onInit() {
-    disparityImgSub.subscribe(this, "stereo/image_raw", rclcpp::QoS(10));
-    leftImgSub.subscribe(this, "left/image_raw", rclcpp::QoS(10));
-    disparityInfoSub.subscribe(this, "stereo/camera_info", rclcpp::QoS(10));
+    const auto qos = utils::inputQoS(*this);
+    disparityImgSub.subscribe(this, "disparity/image_raw", qos);
+    leftImgSub.subscribe(this, "left/image_raw", qos);
+    disparityInfoSub.subscribe(this, "disparity/camera_info", qos);
     sync = std::make_unique<message_filters::Synchronizer<syncPolicy>>(syncPolicy(10), disparityImgSub, disparityInfoSub, leftImgSub);
     sync->registerCallback(std::bind(&WLSFilter::wlsCB, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
     filter = cv::ximgproc::createDisparityWLSFilterGeneric(false);
     filter->setLambda(this->declare_parameter<double>("lambda", 8000.0));
     filter->setSigmaColor(this->declare_parameter<double>("sigma_color", 1.5));
     maxDisparity = this->declare_parameter<double>("max_disparity", 760.0);
+    declare_parameter<int>("disparity_fractional_bits", 5);
+    const auto initial =
+        parameterCB({get_parameter("lambda"), get_parameter("sigma_color"), get_parameter("max_disparity"), get_parameter("disparity_fractional_bits")});
+    if(!initial.successful) throw std::invalid_argument(initial.reason);
     paramCBHandle = this->add_on_set_parameters_callback(std::bind(&WLSFilter::parameterCB, this, std::placeholders::_1));
-    depthPub = image_transport::create_camera_publisher(this, "wls_filtered");
+    depthPub = image_transport::create_camera_publisher(*this, "wls_filtered", rclcpp::QoS(1));
 }
 
 rcl_interfaces::msg::SetParametersResult WLSFilter::parameterCB(const std::vector<rclcpp::Parameter>& params) {
-    for(const auto& p : params) {
-        if(p.get_name() == "lambda") {
-            filter->setLambda(p.as_double());
-        } else if(p.get_name() == "sigma_color") {
-            filter->setSigmaColor(p.as_double());
-        } else if(p.get_name() == "max_disparity") {
-            maxDisparity = p.as_double();
-        }
-    }
     rcl_interfaces::msg::SetParametersResult res;
     res.successful = true;
+    for(const auto& p : params) {
+        if(p.get_name() == "lambda" || p.get_name() == "sigma_color" || p.get_name() == "max_disparity") {
+            if(p.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE || !std::isfinite(p.as_double()) || p.as_double() <= 0) {
+                res.successful = false;
+                res.reason = p.get_name() + " must be a finite positive double";
+            }
+        } else if(p.get_name() == "disparity_fractional_bits") {
+            if(p.get_type() != rclcpp::ParameterType::PARAMETER_INTEGER || p.as_int() < 0 || p.as_int() > 5) {
+                res.successful = false;
+                res.reason = "disparity_fractional_bits must be between 0 and 5";
+            }
+        }
+    }
     return res;
 }
 
 void WLSFilter::wlsCB(const sensor_msgs::msg::Image::ConstSharedPtr& disp,
                       const sensor_msgs::msg::CameraInfo::ConstSharedPtr& disp_info,
                       const sensor_msgs::msg::Image::ConstSharedPtr& leftImg) {
-    cv::Mat leftFrame = utils::msgToMat(this->get_logger(), leftImg, sensor_msgs::image_encodings::MONO8);
-    cv::Mat dispFrame;
-
-    dispFrame = utils::msgToMat(this->get_logger(), disp, disp->encoding);
-    cv::Mat dispFiltered;
-    sensor_msgs::msg::CameraInfo depthInfo = *disp_info;
-    filter->filter(dispFrame, leftFrame, dispFiltered);
-    sensor_msgs::msg::Image depth;
-    auto factor = abs(depthInfo.p[3]) * 100.0;
-    // set distortion to 0
-    if(disp->encoding == sensor_msgs::image_encodings::MONO8) {
-        auto dispMultiplier = 255.0 / maxDisparity;
-        cv::Mat depthOut = cv::Mat(dispFiltered.size(), CV_8UC1);
-        depthOut.forEach<uint8_t>([&dispFiltered, &factor, &dispMultiplier](uint8_t& pixel, const int* position) -> void {
-            auto disp = dispFiltered.at<uint8_t>(position);
-            if(disp == 0) {
-                pixel = 0;
-            } else {
-                pixel = factor / disp * dispMultiplier;
-            }
-        });
-        cv_bridge::CvImage(disp->header, sensor_msgs::image_encodings::MONO8, depthOut).toImageMsg(depth);
-        depthPub.publish(depth, depthInfo);
+    if(!disp || !disp_info || !leftImg) return;
+    auto left = utils::msgToMat(get_logger(), leftImg, sensor_msgs::image_encodings::MONO8);
+    auto input = utils::msgToMat(get_logger(), disp, disp->encoding);
+    const double focalBaseline = std::abs(disp_info->p[3]);
+    if(left.empty() || input.empty() || left.size() != input.size() || !std::isfinite(focalBaseline) || focalBaseline <= 0
+       || (disp->encoding != "mono8" && disp->encoding != "16UC1" && disp->encoding != "32FC1")) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "WLS requires matching disparity/left images and calibrated right-camera projection");
         return;
-    } else {
-        cv::Mat depthOut = cv::Mat(dispFiltered.size(), CV_16UC1);
-        auto dispMultiplier = 255.0 * 255.0 / maxDisparity;
-        depthOut.forEach<uint16_t>([&dispFiltered, &factor, &dispMultiplier](uint16_t& pixel, const int* position) -> void {
-            auto disp = dispFiltered.at<uint16_t>(position);
-            if(disp == 0) {
-                pixel = 0;
-            } else {
-                pixel = factor / disp * dispMultiplier;
+    }
+    try {
+        cv::Mat pixels;
+        const double scale = disp->encoding == "16UC1" ? 1.0 / (1u << get_parameter("disparity_fractional_bits").as_int()) : 1.0;
+        input.convertTo(pixels, CV_32FC1, scale);
+        const double maximum = get_parameter("max_disparity").as_double();
+        for(int y = 0; y < pixels.rows; ++y)
+            for(int x = 0; x < pixels.cols; ++x) {
+                auto& value = pixels.at<float>(y, x);
+                if(!std::isfinite(value) || value <= 0 || value > maximum || value > 2047) value = 0;
             }
-        });
-        cv_bridge::CvImage(disp->header, sensor_msgs::image_encodings::TYPE_16UC1, depthOut).toImageMsg(depth);
-        depthPub.publish(depth, depthInfo);
+        cv::Mat fixed, filtered;
+        pixels.convertTo(fixed, CV_16SC1, 16.0);  // OpenCV WLS uses four fractional bits.
+        filter->setLambda(get_parameter("lambda").as_double());
+        filter->setSigmaColor(get_parameter("sigma_color").as_double());
+        filter->filter(fixed, left, filtered);
+        cv::Mat metres(filtered.size(), CV_32FC1);
+        for(int y = 0; y < filtered.rows; ++y)
+            for(int x = 0; x < filtered.cols; ++x) {
+                const double disparity = filtered.at<int16_t>(y, x) / 16.0;
+                metres.at<float>(y, x) = pixels.at<float>(y, x) > 0 && disparity > 0 ? focalBaseline / disparity : std::numeric_limits<float>::quiet_NaN();
+            }
+        sensor_msgs::msg::Image depth;
+        cv_bridge::CvImage(disp->header, "32FC1", metres).toImageMsg(depth);
+        auto info = *disp_info;
+        info.header = depth.header;
+        depthPub.publish(depth, info);
+    } catch(const cv::Exception& error) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "Dropping WLS input: %s", error.what());
     }
 }
 }  // namespace depthai_filters

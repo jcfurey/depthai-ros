@@ -6,7 +6,6 @@
     #include "cv_bridge/cv_bridge.h"
 #endif
 #include "depthai_filters/utils.hpp"
-#include "opencv2/highgui/highgui.hpp"
 
 namespace depthai_filters {
 
@@ -14,7 +13,10 @@ ThermalTemp::ThermalTemp(const rclcpp::NodeOptions& options) : rclcpp::Node("the
     onInit();
 }
 void ThermalTemp::onInit() {
-    sub = this->create_subscription<sensor_msgs::msg::Image>("/thermal/raw_data/image_raw", 10, std::bind(&ThermalTemp::subCB, this, std::placeholders::_1));
+    const auto qos = utils::inputQoS(*this);
+    declare_parameter<int>("sample_x", 0);
+    declare_parameter<int>("sample_y", 0);
+    sub = this->create_subscription<sensor_msgs::msg::Image>("thermal/raw_data/image_raw", qos, std::bind(&ThermalTemp::subCB, this, std::placeholders::_1));
     colorPub = this->create_publisher<sensor_msgs::msg::Image>("color", 10);
 }
 
@@ -24,16 +26,10 @@ void ThermalTemp::mouseCallback(int /* event */, int x, int y, int /* flags */, 
 }
 
 void ThermalTemp::subCB(const sensor_msgs::msg::Image::ConstSharedPtr& img) {
-    const char* tempWindow = "temperature";
-    cv::namedWindow(tempWindow, cv::WINDOW_NORMAL);
-    cv::setMouseCallback(
-        tempWindow,
-        [](int event, int x, int y, int flags, void* userdata) {
-            auto* self = static_cast<ThermalTemp*>(userdata);
-            self->mouseCallback(event, x, y, flags, userdata);
-        },
-        this);
     cv::Mat frameFp32 = utils::msgToMat(this->get_logger(), img, sensor_msgs::image_encodings::TYPE_32FC1);
+    if(frameFp32.empty()) return;
+    mouseX = get_parameter("sample_x").as_int();
+    mouseY = get_parameter("sample_y").as_int();
     cv::Mat normalized;
     cv::normalize(frameFp32, normalized, 0, 255, cv::NORM_MINMAX, CV_8UC1);
     cv::Mat colormapped;
@@ -53,8 +49,6 @@ void ThermalTemp::subCB(const sensor_msgs::msg::Image::ConstSharedPtr& img) {
     snprintf(text, sizeof(text), "%.1f deg C", frameFp32.at<float>(mouseY, mouseX));
     bool putTextLeft = mouseX > colormapped.cols / 2;
     cv::putText(colormapped, text, cv::Point(putTextLeft ? mouseX - 100 : mouseX + 10, mouseY - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, textColor, 1);
-    cv::imshow(tempWindow, colormapped);
-    cv::waitKey(1);
     sensor_msgs::msg::Image outMsg;
     cv_bridge::CvImage(img->header, sensor_msgs::image_encodings::BGR8, colormapped).toImageMsg(outMsg);
 

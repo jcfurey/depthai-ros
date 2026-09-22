@@ -13,8 +13,9 @@ SegmentationOverlay::SegmentationOverlay(const rclcpp::NodeOptions& options) : r
     onInit();
 }
 void SegmentationOverlay::onInit() {
-    previewSub.subscribe(this, "rgb/preview/image_raw", rclcpp::QoS(10));
-    segSub.subscribe(this, "nn/image_raw", rclcpp::QoS(10));
+    const auto qos = utils::inputQoS(*this);
+    previewSub.subscribe(this, "rgb/preview/image_raw", qos);
+    segSub.subscribe(this, "nn/image_raw", qos);
     sync = std::make_unique<message_filters::Synchronizer<syncPolicy>>(syncPolicy(10), previewSub, segSub);
     sync->registerCallback(std::bind(&SegmentationOverlay::overlayCB, this, std::placeholders::_1, std::placeholders::_2));
     overlayPub = this->create_publisher<sensor_msgs::msg::Image>("overlay", 10);
@@ -25,6 +26,7 @@ void SegmentationOverlay::overlayCB(const sensor_msgs::msg::Image::ConstSharedPt
     cv::Mat previewMat = utils::msgToMat(this->get_logger(), preview, sensor_msgs::image_encodings::BGR8);
     cv::Mat segMat = utils::msgToMat(this->get_logger(), segmentation, sensor_msgs::image_encodings::BGR8);
 
+    if(previewMat.empty() || segMat.empty()) return;
     cv::resize(segMat, segMat, cv::Size(previewMat.cols, previewMat.rows), cv::INTER_LINEAR);
     double alpha = 0.5;
     cv::Mat outImg;

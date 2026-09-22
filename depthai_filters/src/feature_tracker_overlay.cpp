@@ -1,5 +1,7 @@
 #include "depthai_filters/feature_tracker_overlay.hpp"
 
+#include <cmath>
+
 #if __has_include("cv_bridge/cv_bridge.hpp")
     #include "cv_bridge/cv_bridge.hpp"
 #else
@@ -13,8 +15,9 @@ FeatureTrackerOverlay::FeatureTrackerOverlay(const rclcpp::NodeOptions& options)
     onInit();
 }
 void FeatureTrackerOverlay::onInit() {
-    imgSub.subscribe(this, "rgb/preview/image_raw", rclcpp::QoS(10));
-    featureSub.subscribe(this, "feature_tracker/tracked_features", rclcpp::QoS(10));
+    const auto qos = utils::inputQoS(*this);
+    imgSub.subscribe(this, "rgb/preview/image_raw", qos);
+    featureSub.subscribe(this, "feature_tracker/tracked_features", qos);
     sync = std::make_unique<message_filters::Synchronizer<syncPolicy>>(syncPolicy(10), imgSub, featureSub);
     sync->registerCallback(std::bind(&FeatureTrackerOverlay::overlayCB, this, std::placeholders::_1, std::placeholders::_2));
     overlayPub = this->create_publisher<sensor_msgs::msg::Image>("overlay", 10);
@@ -23,7 +26,15 @@ void FeatureTrackerOverlay::onInit() {
 void FeatureTrackerOverlay::overlayCB(const sensor_msgs::msg::Image::ConstSharedPtr& img,
                                       const depthai_ros_msgs::msg::TrackedFeatures::ConstSharedPtr& features) {
     cv::Mat imgMat = utils::msgToMat(this->get_logger(), img, sensor_msgs::image_encodings::BGR8);
+    if(imgMat.empty() || !features) return;
     std::vector<depthai_ros_msgs::msg::TrackedFeature> f = features->features;
+    f.erase(std::remove_if(f.begin(),
+                           f.end(),
+                           [&](const auto& feature) {
+                               return !std::isfinite(feature.position.x) || !std::isfinite(feature.position.y) || feature.position.x < 0
+                                      || feature.position.y < 0 || feature.position.x >= imgMat.cols || feature.position.y >= imgMat.rows;
+                           }),
+            f.end());
     trackFeaturePath(f);
     drawFeatures(imgMat);
     sensor_msgs::msg::Image outMsg;
