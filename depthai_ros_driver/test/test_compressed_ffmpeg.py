@@ -75,7 +75,7 @@ class TestDriverLaunch(unittest.TestCase):
         self.node.destroy_node()
 
     def test_driver_output(self, proc_output):
-        proc_output.assertWaitFor("Driver ready!", timeout=10.0, stream="stderr")
+        self.assertTrue(self.testHelper.waitForDriverActive())
 
     def test_published_rgb_image(self, proc_output):
         self.assertTrue(

@@ -230,7 +230,7 @@ bool Driver::lifecycleAction(uint8_t transition) {
         pipeline->start();
         camRunning = true;
         parameterApplyError.clear();
-        RCLCPP_INFO(get_logger(), "Driver active; camera streaming.");
+        RCLCPP_INFO(get_logger(), "Driver ready! Camera streaming.");
     } else {
         // SDK pipelines are rebuilt on reactivation. Fully drain producers and
         // release device ownership while inactive, cleaned up, or in error.
@@ -366,13 +366,15 @@ void Driver::savePipelineCB(const Trigger::Request::SharedPtr /*req*/, Trigger::
 }
 
 void Driver::startCB(const Trigger::Request::SharedPtr /*req*/, Trigger::Response::SharedPtr res) {
+    std::lock_guard<std::recursive_mutex> lock(lifecycleMtx);
     try {
         start();
         res->success = camRunning;
         if(camRunning) {
             res->message = "Driver started.";
         } else {
-            res->message = "Driver did not start; check the logs for details.";
+            res->message = managedLifecycle->lastError();
+            if(res->message.empty()) res->message = "Driver did not start; check the logs for details.";
         }
     } catch(const std::exception& e) {
         RCLCPP_ERROR(get_logger(), "Starting driver failed: %s", e.what());

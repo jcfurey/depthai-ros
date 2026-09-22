@@ -83,7 +83,7 @@ class TestDriverLaunch(unittest.TestCase):
 
     @unittest.skipUnless(IS_RVC4, reason="Test not supported on RVC2")
     def test_driver_output(self, proc_output):
-        proc_output.assertWaitFor("Driver ready!", timeout=10.0, stream="stderr")
+        self.assertTrue(self.testHelper.waitForDriverActive())
 
     @unittest.skipUnless(IS_RVC4, reason="Test not supported on RVC2")
     def testSize(self, width=0, height=0, msg=Image()):

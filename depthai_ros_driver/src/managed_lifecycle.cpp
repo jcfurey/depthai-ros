@@ -97,6 +97,10 @@ uint8_t ManagedLifecycle::state() const {
     std::lock_guard<std::recursive_mutex> lock(mutex);
     return machine.current_state->id;
 }
+std::string ManagedLifecycle::lastError() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    return lastTransitionError;
+}
 void ManagedLifecycle::trigger(uint8_t id) {
     lifecycle_msgs::msg::TransitionEvent event;
     event.stamp = node.now();
@@ -118,17 +122,24 @@ bool ManagedLifecycle::change(uint8_t id) {
     if(id < Transition::TRANSITION_CONFIGURE || id > Transition::TRANSITION_ACTIVE_SHUTDOWN) return false;
     bool allowed = false;
     for(unsigned int i = 0; i < machine.current_state->valid_transition_size; ++i) allowed |= machine.current_state->valid_transitions[i].id == id;
-    if(!allowed) return false;
+    if(!allowed) {
+        lastTransitionError = "Transition is not allowed from state " + std::string(machine.current_state->label);
+        return false;
+    }
+    lastTransitionError.clear();
     trigger(id);
     const uint8_t completion = id <= 4 ? id * 10 : Transition::TRANSITION_ON_SHUTDOWN_SUCCESS;
     try {
         const bool success = action(id);
+        if(!success) lastTransitionError = "Lifecycle callback rejected the transition";
         trigger(completion + (success ? 0 : 1));
         return success;
     } catch(const std::exception& error) {
+        lastTransitionError = error.what();
         RCLCPP_ERROR(node.get_logger(), "Lifecycle transition failed: %s", error.what());
     } catch(...) {
-        RCLCPP_ERROR(node.get_logger(), "Lifecycle transition failed with an unknown exception");
+        lastTransitionError = "Lifecycle transition failed with an unknown exception";
+        RCLCPP_ERROR(node.get_logger(), "%s", lastTransitionError.c_str());
     }
     trigger(completion + 2);
     try {

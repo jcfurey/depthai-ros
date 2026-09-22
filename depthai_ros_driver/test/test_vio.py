@@ -89,7 +89,7 @@ class TestDriverLaunch(unittest.TestCase):
         self.node.destroy_node()
 
     def test_driver_output(self, proc_output):
-        proc_output.assertWaitFor("Driver ready!", timeout=10.0, stream="stderr")
+        self.assertTrue(self.testHelper.waitForDriverActive())
 
     @unittest.skipUnless(IS_RVC2, reason="Test not supported on RVC4")
     def test_published_imu_messages(self, proc_output):

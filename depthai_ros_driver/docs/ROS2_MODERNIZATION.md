@@ -64,7 +64,8 @@ shutdown also release resources. A configuration/activation exception runs error
 cleanup and returns to unconfigured when cleanup succeeds.
 
 The `~/start`, `~/stop`, `~/start_driver` and `~/stop_driver` compatibility services
-remain. Start configures/activates as necessary; stop deactivates. Ctrl-C and
+remain. Start configures/activates as necessary and returns the lifecycle failure
+reason in its response if startup fails; stop deactivates. Ctrl-C and
 component unload stop producers before destroying converters or ROS publishers.
 `driver.i_connection_timeout` bounds discovery retries (default 30 seconds);
 individual SDK connection calls retain their own timeout. Autostart attempts
@@ -183,8 +184,10 @@ Threshold parameters (milliseconds unless stated otherwise):
 | `diagnostics.stream_timeout_seconds` | 2 seconds |
 
 System telemetry drains only available queue samples and reports stale samples;
-it no longer blocks the executor waiting for telemetry. Automatic recovery is
-opt-in with `driver.i_restart_on_diagnostics_error`; diagnostic device identity
+it no longer blocks the executor waiting for telemetry. Memory usage and totals
+are in MiB, including the corrected `Cmx Memory Total` value (previously bytes).
+Automatic recovery is opt-in with `driver.i_restart_on_diagnostics_error`;
+diagnostic device identity
 is namespace-qualified so another camera cannot trigger a restart.
 
 The existing `poe_rgbd_low_latency.yaml` remains the recommended measured starting

@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <mutex>
+#include <string>
 
 #include "lifecycle_msgs/msg/transition_event.hpp"
 #include "lifecycle_msgs/srv/change_state.hpp"
@@ -24,6 +25,7 @@ class ManagedLifecycle {
     ManagedLifecycle& operator=(const ManagedLifecycle&) = delete;
     bool change(uint8_t transition);
     uint8_t state() const;
+    std::string lastError() const;
 
    private:
     void trigger(uint8_t transition);
@@ -32,6 +34,7 @@ class ManagedLifecycle {
     rclcpp::Node& node;
     std::recursive_mutex& mutex;
     Action action;
+    std::string lastTransitionError;
     rcl_lifecycle_state_machine_t machine;
     rclcpp::Publisher<lifecycle_msgs::msg::TransitionEvent>::SharedPtr events;
     rclcpp::Service<lifecycle_msgs::srv::ChangeState>::SharedPtr changeService;

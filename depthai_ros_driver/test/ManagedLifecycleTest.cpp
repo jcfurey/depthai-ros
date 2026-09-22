@@ -49,10 +49,13 @@ TEST_F(ManagedLifecycleTest, ErrorRecoveryAndRetry) {
     EXPECT_FALSE(lifecycle->change(Transition::TRANSITION_CONFIGURE));
     EXPECT_EQ(lifecycle->state(), State::PRIMARY_STATE_UNCONFIGURED);
     EXPECT_EQ(actions.back(), Transition::TRANSITION_ON_ERROR_SUCCESS);
+    EXPECT_EQ(lifecycle->lastError(), "injected device failure");
     throwOn = 0;
     EXPECT_TRUE(lifecycle->change(Transition::TRANSITION_CONFIGURE));
+    EXPECT_TRUE(lifecycle->lastError().empty());
     rejectOn = Transition::TRANSITION_ACTIVATE;
     EXPECT_FALSE(lifecycle->change(Transition::TRANSITION_ACTIVATE));
+    EXPECT_EQ(lifecycle->lastError(), "Lifecycle callback rejected the transition");
     EXPECT_EQ(lifecycle->state(), State::PRIMARY_STATE_INACTIVE);
     rejectOn = 0;
     EXPECT_TRUE(lifecycle->change(Transition::TRANSITION_ACTIVATE));

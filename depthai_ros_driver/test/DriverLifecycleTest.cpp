@@ -6,6 +6,7 @@
 #include "depthai/device/Platform.hpp"
 #include "depthai_ros_driver/dai_nodes/sensors/sensor_wrapper.hpp"
 #include "depthai_ros_driver/driver.hpp"
+#include "depthai_ros_driver/managed_lifecycle.hpp"
 
 namespace depthai_ros_driver {
 
@@ -13,6 +14,16 @@ namespace depthai_ros_driver {
 // startup timer or connecting a camera.
 class DriverTestAccess {
    public:
+    static Trigger::Response failStart(Driver& driver) {
+        driver.managedLifecycle.reset();
+        driver.managedLifecycle = std::make_unique<ManagedLifecycle>(driver, driver.lifecycleMtx, [](uint8_t transition) {
+            if(transition == lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE) throw std::runtime_error("injected configuration error");
+            return true;
+        });
+        auto response = std::make_shared<Trigger::Response>();
+        driver.startCB(nullptr, response);
+        return *response;
+    }
     static void running(Driver& driver, bool value) {
         driver.camRunning = value;
     }
@@ -76,6 +87,12 @@ class DriverLifecycleTest : public testing::Test {
     rclcpp::Context::SharedPtr context;
     std::shared_ptr<Driver> driver;
 };
+
+TEST_F(DriverLifecycleTest, StartServiceReturnsTheLifecycleFailureCause) {
+    const auto result = DriverTestAccess::failStart(*driver);
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.message, "injected configuration error");
+}
 
 TEST_F(DriverLifecycleTest, DiagnosticsNeverAutoActivateInactiveDriver) {
     ASSERT_TRUE(driver->set_parameter(rclcpp::Parameter("driver.i_restart_on_diagnostics_error", true)).successful);

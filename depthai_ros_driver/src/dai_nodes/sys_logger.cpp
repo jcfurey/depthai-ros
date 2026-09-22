@@ -52,7 +52,7 @@ std::string SysLogger::sysInfoToString(const dai::SystemInformation& sysInfo) {
     ss << " Ddr Memory Usage: " << sysInfo.ddrMemoryUsage.used / (1024.0f * 1024.0f) << std::endl;
     ss << " Ddr Memory Total: " << sysInfo.ddrMemoryUsage.total / (1024.0f * 1024.0f) << std::endl;
     ss << " Cmx Memory Usage: " << sysInfo.cmxMemoryUsage.used / (1024.0f * 1024.0f) << std::endl;
-    ss << " Cmx Memory Total: " << sysInfo.cmxMemoryUsage.total << std::endl;
+    ss << " Cmx Memory Total: " << sysInfo.cmxMemoryUsage.total / (1024.0f * 1024.0f) << std::endl;
     ss << " Leon CSS Memory Usage: " << sysInfo.leonCssMemoryUsage.used / (1024.0f * 1024.0f) << std::endl;
     ss << " Leon CSS Memory Total: " << sysInfo.leonCssMemoryUsage.total / (1024.0f * 1024.0f) << std::endl;
     ss << " Leon MSS Memory Usage: " << sysInfo.leonMssMemoryUsage.used / (1024.0f * 1024.0f) << std::endl;
@@ -94,7 +94,7 @@ void SysLogger::produceDiagnostics(diagnostic_updater::DiagnosticStatusWrapper& 
             stat.add("Ddr Memory Usage", sysInfo.ddrMemoryUsage.used / (1024.0f * 1024.0f));
             stat.add("Ddr Memory Total", sysInfo.ddrMemoryUsage.total / (1024.0f * 1024.0f));
             stat.add("Cmx Memory Usage", sysInfo.cmxMemoryUsage.used / (1024.0f * 1024.0f));
-            stat.add("Cmx Memory Total", sysInfo.cmxMemoryUsage.total);
+            stat.add("Cmx Memory Total", sysInfo.cmxMemoryUsage.total / (1024.0f * 1024.0f));
             stat.add("Leon CSS Memory Usage", sysInfo.leonCssMemoryUsage.used / (1024.0f * 1024.0f));
             stat.add("Leon CSS Memory Total", sysInfo.leonCssMemoryUsage.total / (1024.0f * 1024.0f));
             stat.add("Leon MSS Memory Usage", sysInfo.leonMssMemoryUsage.used / (1024.0f * 1024.0f));

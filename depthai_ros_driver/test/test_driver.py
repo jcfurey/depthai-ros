@@ -39,6 +39,7 @@ def generate_test_description():
         ),
         launch_arguments={
             "name": "oak",
+            "device_ip": os.environ.get("DEPTHAI_TEST_DEVICE_IP", ""),
             "namespace": "",
             "parent_frame": "oak_parent_frame",
             "camera_model": "OAK-D-PRO",
@@ -97,7 +98,7 @@ class TestDriverLaunch(unittest.TestCase):
         self.node.destroy_node()
 
     def test_driver_output(self, proc_output):
-        proc_output.assertWaitFor("Driver ready!", timeout=10.0, stream="stderr")
+        self.assertTrue(self.testHelper.waitForDriverActive())
 
     def test_published_rgb_image(self, proc_output):
         self.assertTrue(
@@ -123,7 +124,7 @@ class TestDriverLaunch(unittest.TestCase):
         proc_output.assertWaitFor("Driver stopped!", timeout=10.0, stream="stderr")
 
         self.assertTrue(self.testHelper.testTriggerService("/oak/start"))
-        proc_output.assertWaitFor("Driver ready!", timeout=10.0, stream="stderr")
+        self.assertTrue(self.testHelper.waitForDriverActive())
 
     def test_save_calibration(self, proc_output):
         self.assertTrue(self.testHelper.testTriggerService("/oak/save_calibration"))
