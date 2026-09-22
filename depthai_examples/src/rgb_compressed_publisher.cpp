@@ -10,6 +10,7 @@
 #include "depthai_bridge/ImageConverter.hpp"
 #include "depthai_bridge/TFPublisher.hpp"
 #include "depthai_bridge/depthaiUtility.hpp"
+#include "depthai_examples/common.hpp"
 #include "rclcpp/node.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 
@@ -19,11 +20,19 @@ int main(int argc, char** argv) {
     std::string tfPrefix = "oak";
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared(tfPrefix);
+    tfPrefix = depthai_examples::framePrefix(node);
 
     dai::VideoEncoderProperties::Profile encProfile = static_cast<dai::VideoEncoderProperties::Profile>(
-        node->declare_parameter<int>("profile", static_cast<int>(dai::VideoEncoderProperties::Profile::MJPEG)));
-    bool publishCompressed = node->declare_parameter<bool>("publish_compressed", false);
-    auto device = std::make_shared<dai::Device>();
+        depthai_examples::parameter<int>(node, "profile", static_cast<int>(dai::VideoEncoderProperties::Profile::MJPEG)));
+    bool publishCompressed = depthai_examples::parameter<bool>(node, "publish_compressed", false);
+    const auto profile = static_cast<int>(encProfile);
+    if(profile < static_cast<int>(dai::VideoEncoderProperties::Profile::H264_BASELINE)
+       || profile > static_cast<int>(dai::VideoEncoderProperties::Profile::MJPEG)
+       || (!publishCompressed && encProfile != dai::VideoEncoderProperties::Profile::MJPEG)) {
+        RCLCPP_ERROR(node->get_logger(), "Select a valid encoder profile; raw image output requires MJPEG, H264/H265 require publish_compressed=true.");
+        return 1;
+    }
+    auto device = depthai_examples::connect(node);
     dai::Pipeline pipeline(device);
 
     // Define sources and outputs
@@ -41,6 +50,8 @@ int main(int argc, char** argv) {
     // Create a bridge publisher for RGB images
     auto rgbConverter = std::make_shared<depthai_bridge::ImageConverter>(
         depthai_bridge::getOpticalFrameName(tfPrefix, depthai_bridge::getSocketName(dai::CameraBoardSocket::CAM_A)), false);
+    rgbConverter->setClock(node->get_clock());
+    rgbConverter->setFFMPEGEncoding(encProfile == dai::VideoEncoderProperties::Profile::H265_MAIN ? "hevc" : "h264");
     rgbConverter->setUpdateRosBaseTimeOnToRosMsg(false);
     auto calibrationHandler = device->readCalibration();
     auto tfPub =
@@ -60,12 +71,10 @@ int main(int argc, char** argv) {
             false);
 
         rgbPub->addPublisherCallback();
-        while(rclcpp::ok() && pipeline.isRunning()) {
-            rclcpp::spin(node);
-        }
+        depthai_examples::spinPipeline(node, pipeline);
     }
 
-    if(encProfile == dai::VideoEncoderProperties::Profile::MJPEG) {
+    else if(encProfile == dai::VideoEncoderProperties::Profile::MJPEG) {
         auto rgbPub = std::make_unique<depthai_bridge::BridgePublisher<sensor_msgs::msg::CompressedImage, dai::EncodedFrame>>(
             encQ,
             node,
@@ -79,9 +88,7 @@ int main(int argc, char** argv) {
             false);
 
         rgbPub->addPublisherCallback();
-        while(rclcpp::ok() && pipeline.isRunning()) {
-            rclcpp::spin(node);
-        }
+        depthai_examples::spinPipeline(node, pipeline);
     } else {
         auto rgbPub = std::make_unique<depthai_bridge::BridgePublisher<ffmpeg_image_transport_msgs::msg::FFMPEGPacket, dai::EncodedFrame>>(
             encQ,
@@ -96,9 +103,7 @@ int main(int argc, char** argv) {
             false);
 
         rgbPub->addPublisherCallback();
-        while(rclcpp::ok() && pipeline.isRunning()) {
-            rclcpp::spin(node);
-        }
+        depthai_examples::spinPipeline(node, pipeline);
     }
 
     return 0;

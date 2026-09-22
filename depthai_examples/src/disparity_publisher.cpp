@@ -7,6 +7,7 @@
 #include "depthai_bridge/DisparityConverter.hpp"
 #include "depthai_bridge/TFPublisher.hpp"
 #include "depthai_bridge/depthaiUtility.hpp"
+#include "depthai_examples/common.hpp"
 #include "rclcpp/node.hpp"
 #include "stereo_msgs/msg/disparity_image.hpp"
 
@@ -14,8 +15,9 @@ int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     std::string tfPrefix = "oak";
     auto node = rclcpp::Node::make_shared(tfPrefix);
+    tfPrefix = depthai_examples::framePrefix(node);
 
-    auto device = std::make_shared<dai::Device>();
+    auto device = depthai_examples::connect(node);
     dai::Pipeline pipeline(device);
 
     auto stereo = pipeline.create<dai::node::StereoDepth>()->build(true);
@@ -29,6 +31,8 @@ int main(int argc, char** argv) {
         7.5,
         20,
         2000);
+
+    dispConv->setClock(node->get_clock());
 
     pipeline.start();
     auto calibrationHandler = device->readCalibration();
@@ -45,9 +49,7 @@ int main(int argc, char** argv) {
 
     dispPub->addPublisherCallback();
 
-    while(rclcpp::ok() && pipeline.isRunning()) {
-        rclcpp::spin(node);
-    }
+    depthai_examples::spinPipeline(node, pipeline);
 
     return 0;
 }

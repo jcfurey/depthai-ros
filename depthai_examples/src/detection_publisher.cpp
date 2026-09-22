@@ -9,6 +9,7 @@
 #include "depthai_bridge/ImageConverter.hpp"
 #include "depthai_bridge/ImgDetectionConverter.hpp"
 #include "depthai_bridge/TFPublisher.hpp"
+#include "depthai_examples/common.hpp"
 #include "rclcpp/node.hpp"
 
 int main(int argc, char** argv) {
@@ -17,8 +18,9 @@ int main(int argc, char** argv) {
     std::string tfPrefix = "oak";
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared(tfPrefix);
+    tfPrefix = depthai_examples::framePrefix(node);
 
-    auto device = std::make_shared<dai::Device>();
+    auto device = depthai_examples::connect(node);
     dai::Pipeline pipeline(device);
 
     auto rgbCamera = pipeline.create<dai::node::Camera>()->build(dai::CameraBoardSocket::CAM_A);
@@ -37,8 +39,11 @@ int main(int argc, char** argv) {
 
     // Create a bridge publisher for RGB images
     auto rgbConverter = std::make_shared<depthai_bridge::ImageConverter>(tfPrefix + "_rgb_camera_optical_frame", false);
+    rgbConverter->setClock(node->get_clock());
 
     auto detConverter = std::make_shared<depthai_bridge::ImgDetectionConverter>(tfPrefix + "_rgb_camera_optical_frame");
+
+    detConverter->setClock(node->get_clock());
 
     auto calibrationHandler = device->readCalibration();
     auto tfPub =
@@ -65,9 +70,7 @@ int main(int argc, char** argv) {
 
     detPub->addPublisherCallback();
 
-    while(rclcpp::ok() && pipeline.isRunning()) {
-        rclcpp::spin(node);
-    }
+    depthai_examples::spinPipeline(node, pipeline);
 
     return 0;
 }

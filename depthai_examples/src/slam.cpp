@@ -14,6 +14,7 @@
 #include "depthai_bridge/TFPublisher.hpp"
 #include "depthai_bridge/TransformDataConverter.hpp"
 #include "depthai_bridge/depthaiUtility.hpp"
+#include "depthai_examples/common.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "rclcpp/node.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
@@ -22,9 +23,10 @@ int main(int argc, char** argv) {
     std::string tfPrefix = "oak";
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared(tfPrefix);
+    tfPrefix = depthai_examples::framePrefix(node);
     auto tfBr = std::make_shared<tf2_ros::TransformBroadcaster>(node);
 
-    auto device = std::make_shared<dai::Device>();
+    auto device = depthai_examples::connect(node);
     dai::Pipeline pipeline(device);
 
     int fps = 60;
@@ -74,10 +76,14 @@ int main(int argc, char** argv) {
 
     // Create a bridge publisher for Odom images
     auto slamConv = std::make_shared<depthai_bridge::TransformDataConverter>("map", "odom");
+    slamConv->setClock(node->get_clock());
     slamConv->fixQuaternion();
     auto odomConv = std::make_shared<depthai_bridge::TransformDataConverter>("odom", "oak");
+    odomConv->setClock(node->get_clock());
     auto mapConv = std::make_shared<depthai_bridge::GridMapConverter>("map");
+    mapConv->setClock(node->get_clock());
     auto pclConv = std::make_shared<depthai_bridge::PointCloudConverter>("map");
+    pclConv->setClock(node->get_clock());
 
     auto calibrationHandler = device->readCalibration();
     auto tfPub =
@@ -137,9 +143,7 @@ int main(int argc, char** argv) {
     obstaclePub->addPublisherCallback();
     groundPub->addPublisherCallback();
 
-    while(rclcpp::ok() && pipeline.isRunning()) {
-        rclcpp::spin(node);
-    }
+    depthai_examples::spinPipeline(node, pipeline);
 
     return 0;
 }

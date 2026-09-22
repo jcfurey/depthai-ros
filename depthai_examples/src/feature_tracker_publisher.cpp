@@ -9,6 +9,7 @@
 #include "depthai_bridge/TFPublisher.hpp"
 #include "depthai_bridge/TrackedFeaturesConverter.hpp"
 #include "depthai_bridge/depthaiUtility.hpp"
+#include "depthai_examples/common.hpp"
 #include "depthai_ros_msgs/msg/tracked_features.hpp"
 #include "rclcpp/node.hpp"
 
@@ -16,8 +17,9 @@ int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     std::string tfPrefix = "oak";
     auto node = rclcpp::Node::make_shared(tfPrefix);
+    tfPrefix = depthai_examples::framePrefix(node);
 
-    auto device = std::make_shared<dai::Device>();
+    auto device = depthai_examples::connect(node);
     dai::Pipeline pipeline(device);
 
     // Define sources and outputs
@@ -68,9 +70,12 @@ int main(int argc, char** argv) {
     auto outputFeaturesRightQueue = featureTrackerRight->outputFeatures.createOutputQueue(8, false);
     auto leftConverter = std::make_shared<depthai_bridge::TrackedFeaturesConverter>(
         depthai_bridge::getOpticalFrameName(tfPrefix, depthai_bridge::getSocketName(dai::CameraBoardSocket::CAM_B, device->getDeviceName())), true);
+    leftConverter->setClock(node->get_clock());
 
     auto rightConverter = std::make_shared<depthai_bridge::TrackedFeaturesConverter>(
         depthai_bridge::getOpticalFrameName(tfPrefix, depthai_bridge::getSocketName(dai::CameraBoardSocket::CAM_C, device->getDeviceName())), true);
+
+    rightConverter->setClock(node->get_clock());
 
     pipeline.start();
     auto calibrationHandler = device->readCalibration();
@@ -93,9 +98,7 @@ int main(int argc, char** argv) {
         30);
 
     featuresPubR->addPublisherCallback();
-    while(rclcpp::ok() && pipeline.isRunning()) {
-        rclcpp::spin(node);
-    }
+    depthai_examples::spinPipeline(node, pipeline);
 
     return 0;
 }

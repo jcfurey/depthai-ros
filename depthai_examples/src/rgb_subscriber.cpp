@@ -1,7 +1,10 @@
+#include <condition_variable>
 #include <cstdio>
 #include <functional>
 #include <memory>
 #include <random>
+
+#include "depthai_examples/common.hpp"
 
 #if __has_include("cv_bridge/cv_bridge.hpp")
     #include "cv_bridge/cv_bridge.hpp"
@@ -55,18 +58,23 @@ class ImgSubscriber : public dai::NodeCRTP<dai::node::ThreadedHostNode, ImgSubsc
     std::shared_ptr<depthai_bridge::ImageConverter> conv;
     Output output = dai::Node::Output{*this, {}};
     void createSubScription(std::shared_ptr<rclcpp::Node> node) {
-        imgSub = node->create_subscription<sensor_msgs::msg::Image>("rgb_image", 10, std::bind(&ImgSubscriber::subCB, this, std::placeholders::_1));
+        imgSub = node->create_subscription<sensor_msgs::msg::Image>(
+            "rgb_image", rclcpp::SensorDataQoS(), std::bind(&ImgSubscriber::subCB, this, std::placeholders::_1));
     }
     void run() override {
         while(isRunning()) {
-            std::lock_guard<std::mutex> lck(imgMutex);
-            if(gotMsg) {
-                dai::ImgFrame daiImg;
-                // instance num needs to be added for respective camera
-                daiImg.setInstanceNum(static_cast<int>(dai::CameraBoardSocket::CAM_A));
-                conv->toDaiMsg(*rosImg, daiImg);
-                output.send(std::make_shared<dai::ImgFrame>(daiImg));
+            sensor_msgs::msg::Image::SharedPtr message;
+            {
+                std::unique_lock<std::mutex> lock(imgMutex);
+                ready.wait_for(lock, std::chrono::milliseconds(50), [this]() { return rosImg != nullptr; });
+                if(!isRunning()) break;
+                message = std::move(rosImg);
             }
+            if(!message) continue;
+            dai::ImgFrame daiImg;
+            daiImg.setInstanceNum(static_cast<int>(dai::CameraBoardSocket::CAM_A));
+            conv->toDaiMsg(*message, daiImg);
+            output.send(std::make_shared<dai::ImgFrame>(std::move(daiImg)));
         }
     }
 
@@ -74,11 +82,11 @@ class ImgSubscriber : public dai::NodeCRTP<dai::node::ThreadedHostNode, ImgSubsc
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr imgSub;
     sensor_msgs::msg::Image::SharedPtr rosImg;
     std::mutex imgMutex;
-    bool gotMsg = false;
+    std::condition_variable ready;
     void subCB(const sensor_msgs::msg::Image::SharedPtr msg) {
         std::lock_guard<std::mutex> lck(imgMutex);
         rosImg = msg;
-        gotMsg = true;
+        ready.notify_one();
     }
 };
 
@@ -86,6 +94,7 @@ int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     std::string tfPrefix = "oak";
     auto node = rclcpp::Node::make_shared(tfPrefix);
+    tfPrefix = depthai_examples::framePrefix(node);
 
     dai::Pipeline pipeline;
 
@@ -95,6 +104,7 @@ int main(int argc, char** argv) {
     rosSubscriberNode->output.link(display->inputs["frame"]);
     // Create a bridge publisher for RGB images
     auto rgbConverter = std::make_shared<depthai_bridge::ImageConverter>(tfPrefix + "_rgb_camera_optical_frame", true);
+    rgbConverter->setClock(node->get_clock());
     rosSubscriberNode->conv = rgbConverter;
 
     auto random_image_publisher = node->create_publisher<sensor_msgs::msg::Image>("rgb_image", 5);
@@ -109,9 +119,7 @@ int main(int argc, char** argv) {
     rclcpp::TimerBase::SharedPtr timer = node->create_wall_timer(std::chrono::seconds(1), timer_callback);
     pipeline.start();
 
-    while(rclcpp::ok() && pipeline.isRunning()) {
-        rclcpp::spin(node);
-    }
+    depthai_examples::spinPipeline(node, pipeline);
 
     return 0;
 }

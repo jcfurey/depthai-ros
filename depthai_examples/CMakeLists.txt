@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10.2) # CMake version in Ubuntu 18.04 LTS
 project(
   depthai_examples
-  VERSION 3.3.0
+  VERSION 3.4.0
   LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -85,4 +85,9 @@ install(
           # slam
   DESTINATION lib/${PROJECT_NAME})
 
+if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(example_configuration test/test_startup_validation.py
+    ENV DEPTHAI_EXAMPLE_BIN_DIR=${CMAKE_CURRENT_BINARY_DIR})
+endif()
 ament_package()

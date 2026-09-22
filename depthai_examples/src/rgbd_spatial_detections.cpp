@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdio>
 #include <functional>
 #include <tuple>
@@ -17,6 +18,7 @@
 #include "depthai_bridge/PointCloudConverter.hpp"
 #include "depthai_bridge/SpatialDetectionConverter.hpp"
 #include "depthai_bridge/TFPublisher.hpp"
+#include "depthai_examples/common.hpp"
 #include "depthai_ros_msgs/msg/spatial_detection_array.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/node.hpp"
@@ -117,49 +119,46 @@ int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     std::string tfPrefix = "oak";
     auto node = rclcpp::Node::make_shared(tfPrefix);
+    tfPrefix = depthai_examples::framePrefix(node);
 
-    std::string mxId = node->declare_parameter<std::string>("mxId", "");
-    std::string ip = node->declare_parameter<std::string>("ip", "");
-    std::string nnName = node->declare_parameter<std::string>("nnName", "yolov6-nano");
-    int imuModeParam = node->declare_parameter<int>("imuMode", 0);
-    bool lrcheck = node->declare_parameter<bool>("lrcheck", true);
-    bool extended = node->declare_parameter<bool>("extended", false);
-    bool subpixel = node->declare_parameter<bool>("subpixel", true);
-    int rgbWidth = node->declare_parameter<int>("rgbWidth", 640);
-    int rgbHeight = node->declare_parameter<int>("rgbHeight", 400);
-    int monoWidth = node->declare_parameter<int>("monoWidth", 640);
-    int monoHeight = node->declare_parameter<int>("monoHeight", 400);
-    int stereoFPS = node->declare_parameter<int>("stereoFPS", 30);
-    bool manualExposure = node->declare_parameter<bool>("manualExposure", false);
-    int expTime = node->declare_parameter<int>("expTime", 20000);
-    int sensIso = node->declare_parameter<int>("sensIso", 800);
-    double angularVelCovariance = node->declare_parameter<double>("angularVelCovariance", 0.02);
-    double linearAccelCovariance = node->declare_parameter<double>("linearAccelCovariance", 0.0);
-    bool enableDotProjector = node->declare_parameter<bool>("enableDotProjector", false);
-    bool enableFloodLight = node->declare_parameter<bool>("enableFloodLight", false);
-    double dotProjectorIntensity = node->declare_parameter<double>("dotProjectorIntensity", 0.5);
-    double floodLightIntensity = node->declare_parameter<double>("floodLightIntensity", 0.5);
-    double enableRosBaseTimeUpdate = node->declare_parameter<bool>("enableRosBaseTimeUpdate", false);
+    std::string mxId = depthai_examples::parameter<std::string>(node, "mxId", "");
+    std::string ip = depthai_examples::parameter<std::string>(node, "ip", "");
+    std::string nnName = depthai_examples::parameter<std::string>(node, "nnName", "yolov6-nano");
+    int imuModeParam = depthai_examples::parameter<int>(node, "imuMode", 0);
+    bool lrcheck = depthai_examples::parameter<bool>(node, "lrcheck", true);
+    bool extended = depthai_examples::parameter<bool>(node, "extended", false);
+    bool subpixel = depthai_examples::parameter<bool>(node, "subpixel", true);
+    int rgbWidth = depthai_examples::parameter<int>(node, "rgbWidth", 640);
+    int rgbHeight = depthai_examples::parameter<int>(node, "rgbHeight", 400);
+    int monoWidth = depthai_examples::parameter<int>(node, "monoWidth", 640);
+    int monoHeight = depthai_examples::parameter<int>(node, "monoHeight", 400);
+    int stereoFPS = depthai_examples::parameter<int>(node, "stereoFPS", 30);
+    bool manualExposure = depthai_examples::parameter<bool>(node, "manualExposure", false);
+    int expTime = depthai_examples::parameter<int>(node, "expTime", 20000);
+    int sensIso = depthai_examples::parameter<int>(node, "sensIso", 800);
+    double angularVelCovariance = depthai_examples::parameter<double>(node, "angularVelCovariance", 0.02);
+    double linearAccelCovariance = depthai_examples::parameter<double>(node, "linearAccelCovariance", 0.0);
+    bool enableDotProjector = depthai_examples::parameter<bool>(node, "enableDotProjector", false);
+    bool enableFloodLight = depthai_examples::parameter<bool>(node, "enableFloodLight", false);
+    double dotProjectorIntensity = depthai_examples::parameter<double>(node, "dotProjectorIntensity", 0.5);
+    double floodLightIntensity = depthai_examples::parameter<double>(node, "floodLightIntensity", 0.5);
+    bool enableRosBaseTimeUpdate = depthai_examples::parameter<bool>(node, "enableRosBaseTimeUpdate", false);
 
+    if(nnName.empty() || imuModeParam < 0 || imuModeParam > 2 || rgbWidth <= 0 || rgbHeight <= 0 || monoWidth <= 0 || monoHeight <= 0 || stereoFPS <= 0
+       || (manualExposure && (expTime <= 0 || sensIso <= 0)) || !std::isfinite(angularVelCovariance) || angularVelCovariance < 0
+       || !std::isfinite(linearAccelCovariance) || linearAccelCovariance < 0 || !std::isfinite(dotProjectorIntensity) || dotProjectorIntensity < 0
+       || dotProjectorIntensity > 1 || !std::isfinite(floodLightIntensity) || floodLightIntensity < 0 || floodLightIntensity > 1) {
+        RCLCPP_ERROR(node->get_logger(),
+                     "Invalid example parameters: require nonempty model, IMU mode 0..2, positive image sizes/FPS/exposure, nonnegative covariance and IR "
+                     "intensities in [0,1].");
+        return 1;
+    }
+    if(enableDotProjector || enableFloodLight) {
+        RCLCPP_ERROR(node->get_logger(), "This example does not implement IR control; use depthai_ros_driver for device-aware IR configuration.");
+        return 1;
+    }
     depthai_bridge::ImuSyncMethod imuMode = static_cast<depthai_bridge::ImuSyncMethod>(imuModeParam);
-    dai::DeviceInfo info;
-    if(!mxId.empty()) {
-        info = dai::DeviceInfo(mxId);
-    } else if(!ip.empty()) {
-        info = dai::DeviceInfo(ip);
-    }
-
-    auto infos = dai::Device::getAllAvailableDevices();
-    RCLCPP_INFO(node->get_logger(), "Devices found: %zu", infos.size());
-    for(auto& deviceInfo : infos) {
-        RCLCPP_INFO(node->get_logger(), "Found device: %s", deviceInfo.getDeviceId().c_str());
-    };
-    if(mxId.empty() || ip.empty()) {
-        RCLCPP_INFO(node->get_logger(), "Opening first available device");
-    } else {
-        RCLCPP_INFO(node->get_logger(), "Opening device: %s", info.getDeviceId().c_str());
-    }
-    auto device = std::make_shared<dai::Device>(info);
+    auto device = depthai_examples::connect(node, mxId, ip);
 
     dai::Pipeline pipeline(device);
     PipelineOpts opts = {device->getPlatform(), nnName, lrcheck, extended, subpixel, stereoFPS, rgbWidth, rgbHeight, monoWidth, monoHeight};
@@ -176,22 +175,10 @@ int main(int argc, char** argv) {
 
     pipeline.start();
 
-    // for now not working on rvc4
-    // std::vector<std::tuple<std::string, int, int>> irDrivers = device->getIrDrivers();
-    // if(!irDrivers.empty()) {
-    //     if(enableDotProjector) {
-    //         device->setIrLaserDotProjectorIntensity(dotProjectorIntensity);
-    //     }
-    //
-    //     if(enableFloodLight) {
-    //         device->setIrFloodLightIntensity(floodLightIntensity);
-    //     }
-    // }
-
     auto imuConverter = std::make_shared<depthai_bridge::ImuConverter>(
         depthai_bridge::getFrameName(tfPrefix, "imu_frame"), imuMode, linearAccelCovariance, angularVelCovariance);
-    if(enableRosBaseTimeUpdate) {
-    }
+
+    imuConverter->setClock(node->get_clock());
     auto imuPublish = std::make_unique<depthai_bridge::BridgePublisher<sensor_msgs::msg::Imu, dai::IMUData>>(
         queues.imuOut,
         node,
@@ -203,15 +190,19 @@ int main(int argc, char** argv) {
 
     auto rgbConverter = std::make_shared<depthai_bridge::ImageConverter>(
         depthai_bridge::getOpticalFrameName(tfPrefix, depthai_bridge::getSocketName(dai::CameraBoardSocket::CAM_A, device->getDeviceName())), false);
+
+    rgbConverter->setClock(node->get_clock());
     if(enableRosBaseTimeUpdate) {
         imuConverter->setUpdateRosBaseTimeOnToRosMsg();
         rgbConverter->setUpdateRosBaseTimeOnToRosMsg();
     }
     auto calibrationHandler = device->readCalibration();
-    auto tfPub = std::make_unique<depthai_bridge::TFPublisher>(node, calibrationHandler, device->getConnectedCameraFeatures(), "oak", device->getDeviceName());
-    while(rclcpp::ok() && pipeline.isRunning()) {
+    auto tfPub =
+        std::make_unique<depthai_bridge::TFPublisher>(node, calibrationHandler, device->getConnectedCameraFeatures(), tfPrefix, device->getDeviceName());
+    {
         auto pclConv = std::make_shared<depthai_bridge::PointCloudConverter>(
             depthai_bridge::getOpticalFrameName(tfPrefix, depthai_bridge::getSocketName(dai::CameraBoardSocket::CAM_A, device->getDeviceName())), false);
+        pclConv->setClock(node->get_clock());
         pclConv->setDepthUnit(dai::StereoDepthConfig::AlgorithmControl::DepthUnit::METER);
         auto pclPublish = std::make_unique<depthai_bridge::BridgePublisher<sensor_msgs::msg::PointCloud2, dai::PointCloudData>>(
             queues.pclOut,
@@ -259,6 +250,8 @@ int main(int argc, char** argv) {
 
         auto detConverter = std::make_shared<depthai_bridge::SpatialDetectionConverter>(
             depthai_bridge::getOpticalFrameName(tfPrefix, depthai_bridge::getSocketName(dai::CameraBoardSocket::CAM_A, device->getDeviceName())), false);
+
+        detConverter->setClock(node->get_clock());
         auto detectionPublish = std::make_unique<depthai_bridge::BridgePublisher<depthai_ros_msgs::msg::SpatialDetectionArray, dai::SpatialImgDetections>>(
             detectionQueue,
             node,
@@ -266,7 +259,7 @@ int main(int argc, char** argv) {
             std::bind(&depthai_bridge::SpatialDetectionConverter::toRosMsg, detConverter, std::placeholders::_1, std::placeholders::_2),
             30);
         detectionPublish->addPublisherCallback();
-        rclcpp::spin(node);
+        depthai_examples::spinPipeline(node, pipeline);
     }
     return 0;
 }

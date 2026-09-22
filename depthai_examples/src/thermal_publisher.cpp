@@ -8,6 +8,7 @@
 #include "depthai_bridge/ImageConverter.hpp"
 #include "depthai_bridge/TFPublisher.hpp"
 #include "depthai_bridge/depthaiUtility.hpp"
+#include "depthai_examples/common.hpp"
 #include "rclcpp/node.hpp"
 
 int main(int argc, char** argv) {
@@ -16,8 +17,9 @@ int main(int argc, char** argv) {
     std::string tfPrefix = "oak";
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared(tfPrefix);
+    tfPrefix = depthai_examples::framePrefix(node);
 
-    auto device = std::make_shared<dai::Device>();
+    auto device = depthai_examples::connect(node);
     dai::Pipeline pipeline(device);
 
     // Define sources and outputs
@@ -31,6 +33,7 @@ int main(int argc, char** argv) {
     // Create a bridge publisher for thermal images
     auto thermalConverter = std::make_shared<depthai_bridge::ImageConverter>(
         depthai_bridge::getOpticalFrameName(tfPrefix, depthai_bridge::getSocketName(dai::CameraBoardSocket::CAM_A, device->getDeviceName())), false);
+    thermalConverter->setClock(node->get_clock());
 
     auto calibrationHandler = device->readCalibration();
     auto tfPub =
@@ -48,9 +51,7 @@ int main(int argc, char** argv) {
 
     thermalPub->addPublisherCallback();
 
-    while(rclcpp::ok() && pipeline.isRunning()) {
-        rclcpp::spin(node);
-    }
+    depthai_examples::spinPipeline(node, pipeline);
 
     return 0;
 }

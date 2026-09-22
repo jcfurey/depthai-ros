@@ -9,6 +9,7 @@
 #include "depthai_bridge/BridgePublisher.hpp"
 #include "depthai_bridge/PointCloudConverter.hpp"
 #include "depthai_bridge/TFPublisher.hpp"
+#include "depthai_examples/common.hpp"
 #include "rclcpp/node.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 
@@ -16,8 +17,9 @@ int main(int argc, char** argv) {
     std::string tfPrefix = "oak";
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared(tfPrefix);
+    tfPrefix = depthai_examples::framePrefix(node);
 
-    auto device = std::make_shared<dai::Device>();
+    auto device = depthai_examples::connect(node);
     dai::Pipeline pipeline(device);
 
     // Define sources and outputs
@@ -32,6 +34,7 @@ int main(int argc, char** argv) {
         std::make_unique<depthai_bridge::TFPublisher>(node, calibrationHandler, device->getConnectedCameraFeatures(), tfPrefix, device->getDeviceName());
     // Create a bridge publisher for RGB images
     auto pclConverter = std::make_shared<depthai_bridge::PointCloudConverter>(tfPrefix + "_rgb_camera_optical_frame", false);
+    pclConverter->setClock(node->get_clock());
 
     pclConverter->setDepthUnit(dai::StereoDepthConfig::AlgorithmControl::DepthUnit::METER);
     auto pclPub = std::make_unique<depthai_bridge::BridgePublisher<sensor_msgs::msg::PointCloud2, dai::PointCloudData>>(
@@ -39,9 +42,7 @@ int main(int argc, char** argv) {
 
     pclPub->addPublisherCallback();
 
-    while(rclcpp::ok() && pipeline.isRunning()) {
-        rclcpp::spin(node);
-    }
+    depthai_examples::spinPipeline(node, pipeline);
 
     return 0;
 }

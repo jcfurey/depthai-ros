@@ -12,6 +12,7 @@
 #include "depthai_bridge/PointCloudConverter.hpp"
 #include "depthai_bridge/TFPublisher.hpp"
 #include "depthai_bridge/depthaiUtility.hpp"
+#include "depthai_examples/common.hpp"
 #include "rclcpp/node.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 
@@ -21,8 +22,9 @@ int main(int argc, char** argv) {
     std::string tfPrefix = "oak";
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared(tfPrefix);
+    tfPrefix = depthai_examples::framePrefix(node);
 
-    auto device = std::make_shared<dai::Device>();
+    auto device = depthai_examples::connect(node);
     dai::Pipeline pipeline(device);
 
     // Define sources and outputs
@@ -47,6 +49,7 @@ int main(int argc, char** argv) {
     // Create a bridge publisher for tof images
     auto pclConverter = std::make_shared<depthai_bridge::PointCloudConverter>(
         depthai_bridge::getOpticalFrameName(tfPrefix, depthai_bridge::getSocketName(dai::CameraBoardSocket::CAM_C, device->getDeviceName())), false);
+    pclConverter->setClock(node->get_clock());
     pclConverter->setDepthUnit(dai::StereoDepthConfig::AlgorithmControl::DepthUnit::METER);
 
     auto calibrationHandler = device->readCalibration();
@@ -58,9 +61,7 @@ int main(int argc, char** argv) {
 
     pclPub->addPublisherCallback();
 
-    while(rclcpp::ok() && pipeline.isRunning()) {
-        rclcpp::spin(node);
-    }
+    depthai_examples::spinPipeline(node, pipeline);
 
     return 0;
 }

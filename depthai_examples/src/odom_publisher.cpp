@@ -9,15 +9,17 @@
 #include "depthai_bridge/TFPublisher.hpp"
 #include "depthai_bridge/TransformDataConverter.hpp"
 #include "depthai_bridge/depthaiUtility.hpp"
+#include "depthai_examples/common.hpp"
 #include "rclcpp/node.hpp"
 
 int main(int argc, char** argv) {
     std::string tfPrefix = "odom";
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared(tfPrefix);
+    tfPrefix = depthai_examples::framePrefix(node);
     auto tfBr = std::make_shared<tf2_ros::TransformBroadcaster>(node);
 
-    auto device = std::make_shared<dai::Device>();
+    auto device = depthai_examples::connect(node);
     dai::Pipeline pipeline(device);
 
     int fps = 60;
@@ -42,6 +44,7 @@ int main(int argc, char** argv) {
 
     // Create a bridge publisher for Odom images
     auto odomConv = std::make_shared<depthai_bridge::TransformDataConverter>(tfPrefix, "oak");
+    odomConv->setClock(node->get_clock());
 
     auto calibrationHandler = device->readCalibration();
     auto tfPub =
@@ -58,9 +61,7 @@ int main(int argc, char** argv) {
     odomPub->enableTransformPub();
     odomPub->addPublisherCallback();
 
-    while(rclcpp::ok() && pipeline.isRunning()) {
-        rclcpp::spin(node);
-    }
+    depthai_examples::spinPipeline(node, pipeline);
 
     return 0;
 }

@@ -1,4 +1,3 @@
-
 #include <cstdio>
 
 #include "depthai/device/Device.hpp"
@@ -8,6 +7,7 @@
 #include "depthai_bridge/ImuConverter.hpp"
 #include "depthai_bridge/TFPublisher.hpp"
 #include "depthai_bridge/depthaiUtility.hpp"
+#include "depthai_examples/common.hpp"
 #include "rclcpp/node.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 
@@ -15,8 +15,9 @@ int main(int argc, char** argv) {
     std::string tfPrefix = "oak";
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared(tfPrefix);
+    tfPrefix = depthai_examples::framePrefix(node);
 
-    auto device = std::make_shared<dai::Device>();
+    auto device = depthai_examples::connect(node);
     dai::Pipeline pipeline(device);
 
     // Define sources and outputs
@@ -36,6 +37,7 @@ int main(int argc, char** argv) {
     // Create a bridge publisher for RGB images
     depthai_bridge::ImuSyncMethod imuMode = depthai_bridge::ImuSyncMethod::COPY;
     auto imuConv = std::make_shared<depthai_bridge::ImuConverter>(depthai_bridge::getFrameName(tfPrefix, "imu_frame"), imuMode);
+    imuConv->setClock(node->get_clock());
 
     auto calibrationHandler = device->readCalibration();
     auto tfPub =
@@ -50,9 +52,7 @@ int main(int argc, char** argv) {
 
     imuPub->addPublisherCallback();
 
-    while(rclcpp::ok() && pipeline.isRunning()) {
-        rclcpp::spin(node);
-    }
+    depthai_examples::spinPipeline(node, pipeline);
 
     return 0;
 }
