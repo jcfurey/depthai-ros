@@ -80,9 +80,10 @@ class Detection : public BaseNode {
         auto tfPrefix = getOpticalFrameName(socketName);
 
         detConverter = std::make_unique<depthai_bridge::ImgDetectionConverter>(tfPrefix, false, ph->getParam<bool>("i_get_base_device_timestamp"));
+        detConverter->setClock(getROSNode()->get_clock());
         detConverter->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>("i_update_ros_base_time_on_ros_msg"));
         rclcpp::PublisherOptions options;
-        options.qos_overriding_options = rclcpp::QosOverridingOptions();
+        options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
         detPub = getROSNode()->template create_publisher<vision_msgs::msg::Detection2DArray>("~/" + getName() + "/detections", 10, options);
         nnQCBID = nnQ->addCallback(std::bind(&Detection::detectionCB, this, std::placeholders::_1, std::placeholders::_2));
 

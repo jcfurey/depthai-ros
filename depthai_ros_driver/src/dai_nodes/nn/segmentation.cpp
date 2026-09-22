@@ -81,6 +81,7 @@ void Segmentation::setupQueues(std::shared_ptr<dai::Device> device) {
         auto tfPrefix = getOpticalFrameName(getSocketName(ph->getSocketID()));
         ptQ = segNode->passthrough.createOutputQueue(ph->getParam<int>("i_max_q_size"), false);
         imageConverter = std::make_unique<depthai_bridge::ImageConverter>(tfPrefix, false);
+        imageConverter->setClock(getROSNode()->get_clock());
         infoManager = std::make_shared<camera_info_manager::CameraInfoManager>(
             getROSNode()->create_sub_node(std::string(getROSNode()->get_name()) + "/" + getName()).get(), "/" + getName());
         infoManager->setCameraInfo(sensor_helpers::getCalibInfo(getROSNode()->get_logger(), imageConverter, device->readCalibration(), ph->getSocketID()));

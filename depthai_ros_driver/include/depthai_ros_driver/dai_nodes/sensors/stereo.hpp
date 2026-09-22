@@ -60,6 +60,7 @@ class Stereo : public BaseNode {
                     dai::CameraBoardSocket rightSocket = dai::CameraBoardSocket::CAM_C);
     ~Stereo();
     void setupQueues(std::shared_ptr<dai::Device> dvice) override;
+    void validateParams(const std::vector<rclcpp::Parameter>& params) override;
     void updateParams(const std::vector<rclcpp::Parameter>& params) override;
     void link(dai::Node::Input& in, int linkType = 1) override;
     dai::Node::Input& getInput(int linkType = 0) override;

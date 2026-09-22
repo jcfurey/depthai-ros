@@ -95,8 +95,9 @@ void Vio::setupQueues(std::shared_ptr<dai::Device> /* device */) {
     transQ = vioNode->transform.createOutputQueue(ph->getParam<int>(ParamNames::MAX_Q_SIZE), false);
     auto tfPrefix = frameId;
     rclcpp::PublisherOptions options;
-    options.qos_overriding_options = rclcpp::QosOverridingOptions();
+    options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
     odomConv = std::make_unique<depthai_bridge::TransformDataConverter>(tfPrefix, childFrameId, ph->getParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP));
+    odomConv->setClock(getROSNode()->get_clock());
     odomConv->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG));
     odomConv->setCovariance(ph->getParam<std::vector<double>>("i_covariance"));
 

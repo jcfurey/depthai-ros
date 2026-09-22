@@ -43,6 +43,7 @@ class BaseNode {
              std::string deviceName,
              bool rsCompatibility);
     virtual ~BaseNode();
+    virtual void validateParams(const std::vector<rclcpp::Parameter>&) {}
     virtual void updateParams(const std::vector<rclcpp::Parameter>& params);
     virtual void link(dai::Node::Input& in, int linkType = 0);
     virtual dai::Node::Input& getInput(int linkType = 0);

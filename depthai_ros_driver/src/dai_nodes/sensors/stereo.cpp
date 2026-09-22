@@ -479,6 +479,10 @@ int Stereo::getWidth() {
 int Stereo::getHeight() {
     return ph->getParam<int>(param_handlers::ParamNames::HEIGHT);
 }
+void Stereo::validateParams(const std::vector<rclcpp::Parameter>& params) {
+    if(ph->getParam<bool>("i_use_neural_depth")) (void)ph->setRuntimeParams(params);
+}
+
 void Stereo::updateParams(const std::vector<rclcpp::Parameter>& params) {
     if(ph->getParam<bool>("i_use_neural_depth")) {
         auto ctrl = ph->setRuntimeParams(params);

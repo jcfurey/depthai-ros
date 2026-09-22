@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(depthai_ros_driver VERSION 3.3.0)
+project(depthai_ros_driver VERSION 3.4.0)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_BUILD_SHARED_LIBS ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -28,6 +28,7 @@ set(COMMON_LIB_NAME ${PROJECT_NAME}_common)
 add_library(
   ${COMMON_LIB_NAME} SHARED
   src/utils.cpp
+  src/stream_diagnostics.cpp
   src/dai_nodes/base_node.cpp
   src/dai_nodes/sys_logger.cpp
   src/dai_nodes/sensors/img_pub.cpp
@@ -108,7 +109,7 @@ target_link_libraries(
 
 add_library(
   ${PROJECT_NAME} SHARED
-  src/driver.cpp src/pipeline/pipeline_generator.cpp
+  src/driver.cpp src/managed_lifecycle.cpp src/pipeline/pipeline_generator.cpp
   src/pipeline/base_pipeline.cpp)
 
 target_link_libraries(
@@ -116,6 +117,8 @@ target_link_libraries(
   PUBLIC ${SENSOR_LIB_NAME}
   ${NN_LIB_NAME}
   ${COMMON_LIB_NAME}
+  rcl_lifecycle::rcl_lifecycle
+  ${lifecycle_msgs_TARGETS}
   rclcpp::rclcpp
   depthai::core
   ${rclcpp_components_TARGETS}
@@ -137,9 +140,11 @@ pluginlib_export_plugin_description_file(${PROJECT_NAME} plugins.xml)
 ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
 ament_export_libraries(${PROJECT_NAME} ${PIPELINE_PLUGIN_LIB_NAME})
 ament_export_dependencies(camera_info_manager cv_bridge depthai_bridge depthai
-  diagnostic_updater std_srvs)
+  diagnostic_updater std_srvs rcl_lifecycle lifecycle_msgs rclcpp rclcpp_components
+  pluginlib sensor_msgs geometry_msgs nav_msgs std_msgs vision_msgs diagnostic_msgs
+  depthai_ros_msgs ffmpeg_image_transport_msgs tf2_ros image_transport)
 
-install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY launch config docs DESTINATION share/${PROJECT_NAME})
 install(FILES README.md DESTINATION share/${PROJECT_NAME})
 
 install(
@@ -161,6 +166,10 @@ install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   find_package(ament_cmake_pytest REQUIRED)
+  ament_add_gtest(stream_diagnostics_test test/StreamDiagnosticsTest.cpp TIMEOUT 30)
+  target_link_libraries(stream_diagnostics_test ${COMMON_LIB_NAME})
+  ament_add_gtest(managed_lifecycle_test test/ManagedLifecycleTest.cpp TIMEOUT 30)
+  target_link_libraries(managed_lifecycle_test ${PROJECT_NAME})
   ament_add_gtest(driver_lifecycle_test test/DriverLifecycleTest.cpp TIMEOUT 30)
   target_link_libraries(driver_lifecycle_test ${PROJECT_NAME})
   ament_add_gtest(driver_data_path_test test/DriverDataPathTest.cpp TIMEOUT 30)

@@ -1,3 +1,6 @@
+#pragma once
+#include <chrono>
+
 #include "depthai/pipeline/datatype/SystemInformation.hpp"
 #include "depthai_ros_driver/dai_nodes/base_node.hpp"
 #include "diagnostic_updater/diagnostic_updater.hpp"
@@ -38,6 +41,9 @@ class SysLogger : public BaseNode {
     std::shared_ptr<dai::node::SystemLogger> sysNode;
     std::shared_ptr<dai::MessageQueue> loggerQ;
     std::string loggerQName;
+    std::weak_ptr<dai::Pipeline> activePipeline;
+    std::shared_ptr<dai::SystemInformation> lastSample;
+    std::chrono::steady_clock::time_point lastReceived = std::chrono::steady_clock::now();
 };
 }  // namespace dai_nodes
 }  // namespace depthai_ros_driver

@@ -123,8 +123,9 @@ void RGBD::setupQueues(std::shared_ptr<dai::Device> /* device */) {
     pclQ = rgbdNode->pcl.createOutputQueue(ph->getParam<int>(ParamNames::MAX_Q_SIZE), false);
     auto tfPrefix = getOpticalFrameName(getSocketName(ph->getSocketID()));
     rclcpp::PublisherOptions options;
-    options.qos_overriding_options = rclcpp::QosOverridingOptions();
+    options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
     pclConv = std::make_unique<depthai_bridge::PointCloudConverter>(tfPrefix, ph->getParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP));
+    pclConv->setClock(getROSNode()->get_clock());
     pclConv->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG));
     pclConv->setDepthUnit(dai::StereoDepthConfig::AlgorithmControl::DepthUnit::METER);
 

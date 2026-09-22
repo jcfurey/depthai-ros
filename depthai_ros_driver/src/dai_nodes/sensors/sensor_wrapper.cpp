@@ -121,6 +121,10 @@ std::vector<std::shared_ptr<sensor_helpers::ImagePublisher>> SensorWrapper::getP
     return sensorNode->getPublishers();
 }
 
+void SensorWrapper::validateParams(const std::vector<rclcpp::Parameter>& params) {
+    if(sensorNode) sensorNode->validateParams(params);
+}
+
 void SensorWrapper::updateParams(const std::vector<rclcpp::Parameter>& params) {
     sensorNode->updateParams(params);
 }

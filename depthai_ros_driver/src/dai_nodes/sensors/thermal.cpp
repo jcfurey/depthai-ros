@@ -128,9 +128,13 @@ std::vector<std::shared_ptr<sensor_helpers::ImagePublisher>> Thermal::getPublish
     return pubs;
 }
 
+void Thermal::validateParams(const std::vector<rclcpp::Parameter>& params) {
+    (void)ph->setRuntimeParams(params);
+}
+
 void Thermal::updateParams(const std::vector<rclcpp::Parameter>& params) {
     auto thermalConf = ph->setRuntimeParams(params);
-    confQ->send(thermalConf);
+    if(thermalConf) confQ->send(thermalConf);
 }
 
 }  // namespace dai_nodes

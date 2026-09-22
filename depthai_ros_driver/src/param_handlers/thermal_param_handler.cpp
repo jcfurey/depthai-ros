@@ -51,20 +51,13 @@ void ThermalParamHandler::declareParams(std::shared_ptr<dai::node::Thermal> ther
     thermal->initialConfig = thermalConfig;
 }
 std::shared_ptr<dai::ThermalConfig> ThermalParamHandler::setRuntimeParams(const std::vector<rclcpp::Parameter>& params) {
+    if(!hasUpdatedParam(params, {"r_auto_ffc", "r_close_manual_shutter", "r_brightness_level", "r_time_noise_filter_level"})) return nullptr;
     auto conf = std::make_shared<dai::ThermalConfig>();
-    for(const auto& p : params) {
-        if(p.get_name() == getFullParamName("r_auto_ffc")) {
-            conf->ffcParams.autoFFC = p.get_value<bool>();
-        } else if(p.get_name() == getFullParamName("r_close_manual_shutter")) {
-            conf->ffcParams.closeManualShutter = p.get_value<bool>();
-        } else if(p.get_name() == getFullParamName("r_brightness_level")) {
-            conf->imageParams.brightnessLevel = p.get_value<int>();
-        } else if(p.get_name() == getFullParamName("i_orientation")) {
-            conf->imageParams.orientation = utils::getValFromMap(p.get_value<std::string>(), thermalOrientMap);
-        } else if(p.get_name() == getFullParamName("r_time_noise_filter_level")) {
-            conf->imageParams.timeNoiseFilterLevel = p.get_value<int>();
-        }
-    }
+    conf->ffcParams.autoFFC = getUpdatedParam<bool>("r_auto_ffc", params);
+    conf->ffcParams.closeManualShutter = getUpdatedParam<bool>("r_close_manual_shutter", params);
+    conf->imageParams.brightnessLevel = getUpdatedParam<int>("r_brightness_level", params);
+    conf->imageParams.timeNoiseFilterLevel = getUpdatedParam<int>("r_time_noise_filter_level", params);
+    conf->imageParams.orientation = utils::getValFromMap(getParam<std::string>("i_orientation"), thermalOrientMap);
     return conf;
 }
 

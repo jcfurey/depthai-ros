@@ -40,8 +40,9 @@ void FeatureTracker::setupQueues(std::shared_ptr<dai::Device> /* device */) {
     featureQ = featureNode->outputFeatures.createOutputQueue(ph->getParam<int>("i_max_q_size"), false);
     auto tfPrefix = getFrameName(parentName);
     rclcpp::PublisherOptions options;
-    options.qos_overriding_options = rclcpp::QosOverridingOptions();
+    options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
     featureConverter = std::make_unique<depthai_bridge::TrackedFeaturesConverter>(tfPrefix, ph->getParam<bool>("i_get_base_device_timestamp"));
+    featureConverter->setClock(getROSNode()->get_clock());
     featureConverter->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>("i_update_ros_base_time_on_ros_msg"));
 
     featurePub = getROSNode()->create_publisher<depthai_ros_msgs::msg::TrackedFeatures>("~/" + getName() + "/tracked_features", 10, options);

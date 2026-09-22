@@ -11,7 +11,7 @@ namespace depthai_ros_driver {
 namespace dai_nodes {
 SysLogger::SysLogger(
     const std::string& daiNodeName, std::shared_ptr<rclcpp::Node> node, std::shared_ptr<dai::Pipeline> pipeline, std::string deviceName, bool rsCompat)
-    : BaseNode(daiNodeName, node, pipeline, deviceName, rsCompat) {
+    : BaseNode(daiNodeName, node, pipeline, deviceName, rsCompat), activePipeline(pipeline) {
     RCLCPP_DEBUG(node->get_logger(), "Creating node %s", daiNodeName.c_str());
     setNames();
     sysNode = pipeline->create<dai::node::SystemLogger>();
@@ -68,11 +68,27 @@ std::string SysLogger::sysInfoToString(const dai::SystemInformation& sysInfo) {
 
 void SysLogger::produceDiagnostics(diagnostic_updater::DiagnosticStatusWrapper& stat) {
     try {
-        bool timeout;
-        auto logData = loggerQ->get<dai::SystemInformation>(std::chrono::seconds(5), timeout);
-        if(!timeout) {
-            stat.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "System Information");
-            const dai::SystemInformation& sysInfo = *logData;
+        const auto current = activePipeline.lock();
+        if(!current || !current->isRunning()) {
+            lastReceived = std::chrono::steady_clock::now();
+            stat.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Pipeline inactive");
+            return;
+        }
+        // Drain the bounded queue without blocking an executor thread.
+        for(const auto& sample : loggerQ->tryGetAll<dai::SystemInformation>()) {
+            if(sample) {
+                lastSample = sample;
+                lastReceived = std::chrono::steady_clock::now();
+            }
+        }
+        const auto age = std::chrono::duration<double>(std::chrono::steady_clock::now() - lastReceived).count();
+        stat.add("seconds_since_last_sample", age);
+        if(lastSample) {
+            stat.summary(age > 5.0   ? diagnostic_msgs::msg::DiagnosticStatus::ERROR
+                         : age > 2.0 ? diagnostic_msgs::msg::DiagnosticStatus::WARN
+                                     : diagnostic_msgs::msg::DiagnosticStatus::OK,
+                         age > 2.0 ? "Stale system information" : "System Information");
+            const dai::SystemInformation& sysInfo = *lastSample;
             stat.add("Leon CSS CPU Usage", sysInfo.leonCssCpuUsage.average * 100);
             stat.add("Leon MSS CPU Usage", sysInfo.leonMssCpuUsage.average * 100);
             stat.add("Ddr Memory Usage", sysInfo.ddrMemoryUsage.used / (1024.0f * 1024.0f));
@@ -89,7 +105,8 @@ void SysLogger::produceDiagnostics(diagnostic_updater::DiagnosticStatusWrapper& 
             stat.add("UPA Chip Temperature", sysInfo.chipTemperature.upa);
             stat.add("DSS Chip Temperature", sysInfo.chipTemperature.dss);
         } else {
-            stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "No Data");
+            stat.summary(age > 5.0 ? diagnostic_msgs::msg::DiagnosticStatus::ERROR : diagnostic_msgs::msg::DiagnosticStatus::WARN,
+                         "Waiting for system information");
         }
     } catch(const std::exception& e) {
         RCLCPP_ERROR(getROSNode()->get_logger(), "No data on logger queue!");

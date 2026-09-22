@@ -38,7 +38,7 @@ void Imu::setupQueues(std::shared_ptr<dai::Device> /* device */) {
     imuQ = imuNode->out.createOutputQueue(ph->getParam<int>("i_max_q_size"), false);
     auto imuMode = ph->getSyncMethod();
     rclcpp::PublisherOptions options;
-    options.qos_overriding_options = rclcpp::QosOverridingOptions();
+    options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
     param_handlers::imu::ImuMsgType msgType = ph->getMsgType();
     bool enableMagn = msgType == param_handlers::imu::ImuMsgType::IMU_WITH_MAG || msgType == param_handlers::imu::ImuMsgType::IMU_WITH_MAG_SPLIT;
     imuConverter = std::make_unique<depthai_bridge::ImuConverter>(getFrameName(getName() + "_frame"),
@@ -50,6 +50,7 @@ void Imu::setupQueues(std::shared_ptr<dai::Device> /* device */) {
                                                                   ph->getParam<bool>("i_enable_rotation"),
                                                                   enableMagn,
                                                                   ph->getParam<bool>("i_get_base_device_timestamp"));
+    imuConverter->setClock(getROSNode()->get_clock());
     imuConverter->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>("i_update_ros_base_time_on_ros_msg"));
     std::string topicSuffix = "/data";
     if(rsCompatibilityMode()) {

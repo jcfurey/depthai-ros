@@ -9,6 +9,7 @@
 #include "depthai/properties/VideoEncoderProperties.hpp"
 #include "depthai_bridge/ImageConverter.hpp"
 #include "depthai_ros_driver/dai_nodes/sensors/sensor_helpers.hpp"
+#include "depthai_ros_driver/stream_diagnostics.hpp"
 #include "depthai_ros_driver/utils.hpp"
 #include "ffmpeg_image_transport_msgs/msg/ffmpeg_packet.hpp"
 #include "image_transport/image_transport.hpp"
@@ -24,7 +25,7 @@ ImagePublisher::ImagePublisher(std::shared_ptr<rclcpp::Node> node,
                                bool synced,
                                bool ipcEnabled,
                                const utils::VideoEncoderConfig& encoderConfig)
-    : node(node), encConfig(encoderConfig), out(out), qName(qName), ipcEnabled(ipcEnabled), synced(synced) {
+    : node(node), pipeline(pipeline), encConfig(encoderConfig), out(out), qName(qName), ipcEnabled(ipcEnabled), synced(synced) {
     if(encoderConfig.enabled) {
         encoder = createEncoder(pipeline, encoderConfig);
         this->out->link(encoder->input);
@@ -55,8 +56,12 @@ void ImagePublisher::setup(std::shared_ptr<dai::Device> device, const utils::Img
         infoPub =
             node->create_publisher<sensor_msgs::msg::CameraInfo>(pubConfig.topicName + pubConfig.infoSuffix + "/camera_info", rclcpp::QoS(10), pubOptions);
     } else {
-        imgPubIT = image_transport::create_camera_publisher(node.get(), pubConfig.topicName + pubConfig.topicSuffix);
+        imgPubIT = image_transport::create_camera_publisher(*node, pubConfig.topicName + pubConfig.topicSuffix, rclcpp::QoS(1), pubOptions);
     }
+    diagnostics = std::make_unique<StreamDiagnostics>(node, "stream: " + qName, [this]() {
+        const auto current = pipeline.lock();
+        return current && current->isRunning() && shouldPublish();
+    });
     if(!synced) {
         if(encConfig.enabled) {
             dataQ = encoder->out.createOutputQueue(pubConf.maxQSize, pubConf.qBlocking);
@@ -69,6 +74,7 @@ void ImagePublisher::setup(std::shared_ptr<dai::Device> device, const utils::Img
 
 void ImagePublisher::createImageConverter(std::shared_ptr<dai::Device> device) {
     converter = std::make_shared<depthai_bridge::ImageConverter>(convConfig.tfPrefix, convConfig.interleaved, convConfig.getBaseDeviceTimestamp);
+    converter->setClock(node->get_clock());
     converter->setUpdateRosBaseTimeOnToRosMsg(convConfig.updateROSBaseTimeOnRosMsg);
     if(convConfig.lowBandwidth) {
         converter->convertFromBitstream(convConfig.encoding);
@@ -140,6 +146,7 @@ void ImagePublisher::closeQueue() {
         dataQ->removeCallback(cbID);
         dataQ->close();
     }
+    diagnostics.reset();
 }
 void ImagePublisher::link(dai::Node::Input& in) {
     if(encConfig.enabled) {
@@ -162,6 +169,9 @@ std::string ImagePublisher::getQueueName() {
     return qName;
 }
 std::shared_ptr<Image> ImagePublisher::convertData(const std::shared_ptr<dai::ADatatype>& data) {
+    if(diagnostics) {
+        if(auto buffer = std::dynamic_pointer_cast<dai::Buffer>(data)) diagnostics->record(buffer->getTimestamp(), buffer->getSequenceNum());
+    }
     sensor_msgs::msg::CameraInfo info;
     auto img = std::make_shared<Image>();
     if(encConfig.enabled) {

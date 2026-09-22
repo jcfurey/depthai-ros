@@ -56,6 +56,7 @@ class PipelineGenerator {
     /** Close all host queues and detach their callbacks before stopping the device pipeline. */
     void closeQueues();
 
+    void validateParams(const std::vector<rclcpp::Parameter>& params);
     void updateParams(const std::vector<rclcpp::Parameter>& params);
 
    protected:

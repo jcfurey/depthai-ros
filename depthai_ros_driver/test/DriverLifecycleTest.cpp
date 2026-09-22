@@ -13,6 +13,19 @@ namespace depthai_ros_driver {
 // startup timer or connecting a camera.
 class DriverTestAccess {
    public:
+    static void running(Driver& driver, bool value) {
+        driver.camRunning = value;
+    }
+    static void diagnostic(Driver& driver, const diagnostic_msgs::msg::DiagnosticArray::SharedPtr& message) {
+        driver.diagCB(message);
+    }
+    static uint64_t restarts(Driver& driver) {
+        return driver.restartCount;
+    }
+    static size_t pending(Driver& driver) {
+        std::lock_guard<std::mutex> lock(driver.pendingParamsMtx);
+        return driver.pendingParams.size();
+    }
     static void initialize(const std::shared_ptr<Driver>& driver) {
         driver->startTimer->cancel();
         driver->ph = std::make_unique<param_handlers::DriverParamHandler>(driver->getNodeHandle(), "driver");
@@ -63,6 +76,18 @@ class DriverLifecycleTest : public testing::Test {
     rclcpp::Context::SharedPtr context;
     std::shared_ptr<Driver> driver;
 };
+
+TEST_F(DriverLifecycleTest, DiagnosticsNeverAutoActivateInactiveDriver) {
+    ASSERT_TRUE(driver->set_parameter(rclcpp::Parameter("driver.i_restart_on_diagnostics_error", true)).successful);
+    auto message = std::make_shared<diagnostic_msgs::msg::DiagnosticArray>();
+    diagnostic_msgs::msg::DiagnosticStatus status;
+    status.name = "oak: sys_logger";
+    status.hardware_id = "/oak_test_device";
+    status.level = status.ERROR;
+    message->status.push_back(status);
+    DriverTestAccess::diagnostic(*driver, message);
+    EXPECT_EQ(DriverTestAccess::restarts(*driver), 0u);
+}
 
 TEST_F(DriverLifecycleTest, ConstrainedRvc2KeepsDepthRawAndEncodesColor) {
     for(const auto& value : {"AUTO", "LOW_BANDWIDTH"}) {
@@ -189,4 +214,26 @@ TEST_F(DriverLifecycleTest, ReleasingConfiguredDriverRunsDestructor) {
     driver.reset();
     EXPECT_TRUE(weak.expired());
 }
+TEST_F(DriverLifecycleTest, InitializationSettingsRequireInactiveState) {
+    DriverTestAccess::running(*driver, true);
+    EXPECT_FALSE(driver->set_parameter(rclcpp::Parameter("driver.i_transport_profile", "RAW")).successful);
+    DriverTestAccess::running(*driver, false);
+    EXPECT_TRUE(driver->set_parameter(rclcpp::Parameter("driver.i_transport_profile", "RAW")).successful);
+}
+
+TEST_F(DriverLifecycleTest, OnlyCommittedRuntimeUpdatesAreQueued) {
+    DriverTestAccess::running(*driver, true);
+    EXPECT_FALSE(
+        driver->set_parameters_atomically({rclcpp::Parameter("driver.r_laser_dot_intensity", 0.2), rclcpp::Parameter("driver.r_floodlight_intensity", 2.0)})
+            .successful);
+    EXPECT_EQ(DriverTestAccess::pending(*driver), 0u);
+    EXPECT_TRUE(
+        driver->set_parameters_atomically({rclcpp::Parameter("driver.r_laser_dot_intensity", 0.2), rclcpp::Parameter("driver.r_floodlight_intensity", 0.3)})
+            .successful);
+    EXPECT_EQ(DriverTestAccess::pending(*driver), 2u);
+    EXPECT_TRUE(driver->set_parameter(rclcpp::Parameter("driver.r_laser_dot_intensity", 0.4)).successful);
+    EXPECT_EQ(DriverTestAccess::pending(*driver), 2u);
+    DriverTestAccess::running(*driver, false);
+}
+
 }  // namespace depthai_ros_driver

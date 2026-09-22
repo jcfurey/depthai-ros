@@ -151,7 +151,7 @@ def launch_setup(context, *args, **kwargs):
 
     tf_prefix = tf_prefix.strip("/") or name
 
-    params = {"driver": {"i_tf_prefix": tf_prefix}}
+    params = {"driver": {"i_tf_prefix": tf_prefix, "i_autostart": LaunchConfiguration("autostart").perform(context).lower() == "true"}}
     connection_arguments = {
         "i_ip": LaunchConfiguration("device_ip").perform(context),
         "i_device_id": LaunchConfiguration("device_id").perform(context),
@@ -214,9 +214,11 @@ def launch_setup(context, *args, **kwargs):
             "nn/image_raw",
             "nn/detections",
             "nn/spatial_detections",
+            "nn/passthrough/image_raw",
         )
     ]
     rviz_remappings.append(("/oak/rgbd/points", resolved_points_topic))
+    rviz_remappings.append(("/spatial_bb", f"{camera_root}/spatial_bb"))
 
     return [
         Node(

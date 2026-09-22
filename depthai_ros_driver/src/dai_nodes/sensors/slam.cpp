@@ -90,12 +90,13 @@ void Slam::setInOut(std::shared_ptr<dai::Pipeline> /* pipeline */) {}
 void Slam::setupQueues(std::shared_ptr<dai::Device> /* device */) {
     using ParamNames = param_handlers::ParamNames;
     rclcpp::PublisherOptions options;
-    options.qos_overriding_options = rclcpp::QosOverridingOptions();
+    options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
     if(ph->getParam<bool>("i_publish_tf")) {
         tfBr = std::make_shared<tf2_ros::TransformBroadcaster>(getROSNode());
         mapToOdomQ = slamNode->odomCorrection.createOutputQueue(ph->getParam<int>(ParamNames::MAX_Q_SIZE), false);
         mapToOdomConv =
             std::make_unique<depthai_bridge::TransformDataConverter>(mapFrame, odomFrame, ph->getParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP));
+        mapToOdomConv->setClock(getROSNode()->get_clock());
         mapToOdomConv->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG));
         mapToOdomConv->fixQuaternion();
         mapToOdomQ->addCallback(std::bind(&Slam::mapToOdomCB, this, std::placeholders::_1, std::placeholders::_2));
@@ -106,12 +107,14 @@ void Slam::setupQueues(std::shared_ptr<dai::Device> /* device */) {
             "~/" + getName() + "/absolute_pose", ph->getParam<int>(ParamNames::MAX_Q_SIZE), options);
         absolutePoseConv =
             std::make_unique<depthai_bridge::TransformDataConverter>(mapFrame, baseFrame, ph->getParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP));
+        absolutePoseConv->setClock(getROSNode()->get_clock());
         absolutePoseConv->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG));
         absolutePoseQ->addCallback(std::bind(&Slam::absolutePoseCB, this, std::placeholders::_1, std::placeholders::_2));
     }
     if(ph->getParam<bool>("i_publish_map")) {
         mapQ = slamNode->occupancyGridMap.createOutputQueue(ph->getParam<int>(ParamNames::MAX_Q_SIZE), false);
         mapConv = std::make_unique<depthai_bridge::GridMapConverter>(mapFrame, ph->getParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP));
+        mapConv->setClock(getROSNode()->get_clock());
         mapConv->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG));
         mapPub = getROSNode()->create_publisher<nav_msgs::msg::OccupancyGrid>("~/" + getName() + "/map", ph->getParam<int>(ParamNames::MAX_Q_SIZE), options);
         mapQ->addCallback(std::bind(&Slam::mapCB, this, std::placeholders::_1, std::placeholders::_2));
@@ -119,6 +122,7 @@ void Slam::setupQueues(std::shared_ptr<dai::Device> /* device */) {
     if(ph->getParam<bool>("i_publish_ground_pcl")) {
         groundPclQ = slamNode->groundPCL.createOutputQueue(ph->getParam<int>(ParamNames::MAX_Q_SIZE), false);
         groundPclConv = std::make_unique<depthai_bridge::PointCloudConverter>(mapFrame, ph->getParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP));
+        groundPclConv->setClock(getROSNode()->get_clock());
         groundPclConv->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG));
         groundPclPub =
             getROSNode()->create_publisher<sensor_msgs::msg::PointCloud2>("~/" + getName() + "/ground_pcl", ph->getParam<int>(ParamNames::MAX_Q_SIZE), options);
@@ -127,6 +131,7 @@ void Slam::setupQueues(std::shared_ptr<dai::Device> /* device */) {
     if(ph->getParam<bool>("i_publish_obstacle_pcl")) {
         obstaclePclQ = slamNode->obstaclePCL.createOutputQueue(ph->getParam<int>(ParamNames::MAX_Q_SIZE), false);
         obstaclePclConv = std::make_unique<depthai_bridge::PointCloudConverter>(mapFrame, ph->getParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP));
+        obstaclePclConv->setClock(getROSNode()->get_clock());
         obstaclePclConv->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG));
         obstaclePclPub = getROSNode()->create_publisher<sensor_msgs::msg::PointCloud2>(
             "~/" + getName() + "/obstacle_pcl", ph->getParam<int>(ParamNames::MAX_Q_SIZE), options);

@@ -64,11 +64,14 @@ class SpatialDetection : public BaseNode {
         std::string socketName = getSocketName(ph->getSocketID());
         auto tfPrefix = getOpticalFrameName(socketName);
         detConverter = std::make_unique<depthai_bridge::SpatialDetectionConverter>(tfPrefix, false, ph->getParam<bool>("i_get_base_device_timestamp"));
+        detConverter->setClock(getROSNode()->get_clock());
         detConverter->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>("i_update_ros_base_time_on_ros_msg"));
         nnQ->addCallback(std::bind(&SpatialDetection::spatialCB, this, std::placeholders::_1, std::placeholders::_2));
         rclcpp::PublisherOptions options;
-        options.qos_overriding_options = rclcpp::QosOverridingOptions();
+        options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
         detPub = getROSNode()->template create_publisher<vision_msgs::msg::Detection3DArray>("~/" + getName() + "/spatial_detections", 10, options);
+        spatial2dPub =
+            getROSNode()->template create_publisher<depthai_ros_msgs::msg::SpatialDetectionArray>("~/" + getName() + "/spatial_detections_2d", 10, options);
 
         if(ph->getParam<bool>("i_enable_passthrough")) {
             utils::ImgConverterConfig convConf;
@@ -145,6 +148,12 @@ class SpatialDetection : public BaseNode {
     void spatialCB(const std::string& /*name*/, const std::shared_ptr<dai::ADatatype>& data) {
         if(rclcpp::ok()) {
             auto inDet = std::dynamic_pointer_cast<dai::SpatialImgDetections>(data);
+            if(!inDet) return;
+            if(spatial2dPub->get_subscription_count() > 0) {
+                std::deque<depthai_ros_msgs::msg::SpatialDetectionArray> spatial;
+                detConverter->toRosMsg(inDet, spatial);
+                for(auto& message : spatial) spatial2dPub->publish(std::move(message));
+            }
             std::deque<vision_msgs::msg::Detection3DArray> deq;
             detConverter->toRosVisionMsg(inDet, deq);
             while(deq.size() > 0) {
@@ -154,6 +163,7 @@ class SpatialDetection : public BaseNode {
             }
         }
     };
+    rclcpp::Publisher<depthai_ros_msgs::msg::SpatialDetectionArray>::SharedPtr spatial2dPub;
     std::unique_ptr<depthai_bridge::SpatialDetectionConverter> detConverter;
     std::vector<std::string> labelNames;
     rclcpp::Publisher<vision_msgs::msg::Detection3DArray>::SharedPtr detPub;

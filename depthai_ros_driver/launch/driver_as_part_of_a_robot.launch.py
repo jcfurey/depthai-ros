@@ -41,7 +41,7 @@ def launch_setup(context, *args, **kwargs):
     )
     override_cam_model = LaunchConfiguration("override_cam_model", default="false")
 
-    tf_params = {"driver": {"i_tf_prefix": tf_prefix}}
+    tf_params = {"driver": {"i_tf_prefix": tf_prefix, "i_autostart": LaunchConfiguration("autostart").perform(context).lower() == "true"}}
     connection_arguments = {
         "i_ip": LaunchConfiguration("device_ip").perform(context),
         "i_device_id": LaunchConfiguration("device_id").perform(context),
@@ -112,6 +112,7 @@ def generate_launch_description():
     depthai_prefix = get_package_share_directory("depthai_ros_driver")
     declared_arguments = [
         DeclareLaunchArgument("name", default_value="oak"),
+        DeclareLaunchArgument("autostart", default_value="true"),
         DeclareLaunchArgument("namespace", default_value=""),
         DeclareLaunchArgument(
             "tf_prefix",

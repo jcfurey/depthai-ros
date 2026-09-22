@@ -23,6 +23,7 @@ enum class Platform;
 }  // namespace dai
 
 namespace depthai_ros_driver {
+class ManagedLifecycle;
 using Trigger = std_srvs::srv::Trigger;
 class Driver : public rclcpp::Node {
    public:
@@ -74,6 +75,9 @@ class Driver : public rclcpp::Node {
      */
     void loadCalib(const std::string& path);
     rcl_interfaces::msg::SetParametersResult parameterCB(const std::vector<rclcpp::Parameter>& params);
+    void applyPendingParameters();
+    void publishStatus();
+    bool lifecycleAction(uint8_t transition);
     void parametersAppliedCB(const std::vector<rclcpp::Parameter>& params);
     OnSetParametersCallbackHandle::SharedPtr paramCBHandle;
     PostSetParametersCallbackHandle::SharedPtr postParamCBHandle;
@@ -112,7 +116,14 @@ class Driver : public rclcpp::Node {
     std::mutex transportParamsMtx;
     std::unordered_set<std::string> transportManagedParams;
     std::unique_ptr<depthai_bridge::TFPublisher> tfPub;
-    rclcpp::TimerBase::SharedPtr startTimer;
+    rclcpp::TimerBase::SharedPtr startTimer, parameterTimer, statusTimer;
+    rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr statusPublisher;
+    std::unique_ptr<ManagedLifecycle> managedLifecycle;
+    std::mutex pendingParamsMtx;
+    std::vector<rclcpp::Parameter> pendingParams;
+    std::atomic<bool> configurationDirty{false};
+    std::string parameterApplyError;
+    uint64_t restartCount = 0, restartFailures = 0;
     rclcpp::CallbackGroup::SharedPtr srvGroup;
     // Startup declares/sets parameters synchronously, re-entering parameterCB.
     std::recursive_mutex lifecycleMtx;

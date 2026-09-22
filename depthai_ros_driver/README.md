@@ -1,5 +1,8 @@
 # DepthAI ROS driver
 
+See the [ROS 2 modernization and migration guide](docs/ROS2_MODERNIZATION.md)
+for managed lifecycle operation, parameter semantics, message contracts and diagnostics.
+
 ## Quick start
 
 USB 3 cameras use raw image transport by default:

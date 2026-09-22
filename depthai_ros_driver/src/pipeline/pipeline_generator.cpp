@@ -124,6 +124,10 @@ void PipelineGenerator::closeQueues() {
     }
 }
 
+void PipelineGenerator::validateParams(const std::vector<rclcpp::Parameter>& params) {
+    for(const auto& node : daiNodes) node->validateParams(params);
+}
+
 void PipelineGenerator::updateParams(const std::vector<rclcpp::Parameter>& params) {
     for(const auto& node : daiNodes) {
         node->updateParams(params);

@@ -33,6 +33,7 @@ namespace camera_info_manager {
 class CameraInfoManager;
 }
 namespace depthai_ros_driver {
+class StreamDiagnostics;
 namespace dai_nodes {
 
 namespace sensor_helpers {
@@ -94,6 +95,7 @@ class ImagePublisher {
    private:
     friend class ImagePublisherTestAccess;
     std::shared_ptr<rclcpp::Node> node;
+    std::weak_ptr<dai::Pipeline> pipeline;
     utils::VideoEncoderConfig encConfig;
     utils::ImgPublisherConfig pubConfig;
     utils::ImgConverterConfig convConfig;
@@ -107,6 +109,7 @@ class ImagePublisher {
     rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr compressedImgPub;
     image_transport::CameraPublisher imgPubIT;
     std::shared_ptr<dai::MessageQueue> dataQ;
+    std::unique_ptr<StreamDiagnostics> diagnostics;
     int cbID = -1;
     std::string qName;
     bool ipcEnabled;

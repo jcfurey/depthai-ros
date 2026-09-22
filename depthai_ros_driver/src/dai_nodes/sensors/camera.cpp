@@ -121,6 +121,10 @@ std::vector<std::shared_ptr<sensor_helpers::ImagePublisher>> Camera::getPublishe
     return publishers;
 }
 
+void Camera::validateParams(const std::vector<rclcpp::Parameter>& params) {
+    (void)ph->setRuntimeParams(params);
+}
+
 void Camera::updateParams(const std::vector<rclcpp::Parameter>& params) {
     auto ctrl = ph->setRuntimeParams(params);
     controlQ->send(ctrl);

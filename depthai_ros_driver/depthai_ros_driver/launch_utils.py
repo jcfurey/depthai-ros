@@ -42,6 +42,11 @@ def declare_camera_arguments():
     """Arguments that every single-camera wrapper should expose."""
     return [
         DeclareLaunchArgument(
+            "autostart",
+            default_value="true",
+            description="Configure and activate automatically; false enables external lifecycle management.",
+        ),
+        DeclareLaunchArgument(
             "namespace",
             default_value="",
             description="ROS namespace for the camera node and its topics.",
@@ -68,6 +73,7 @@ def declare_camera_arguments():
 def camera_launch_arguments():
     """Forward common single-camera arguments to ``driver.launch.py``."""
     return {
+        "autostart": LaunchConfiguration("autostart"),
         "namespace": LaunchConfiguration("namespace"),
         "tf_prefix": LaunchConfiguration("tf_prefix"),
         "use_intra_process": LaunchConfiguration("use_intra_process"),
@@ -104,3 +110,11 @@ def image_transport_parameters(camera_name, ffmpeg_gop_size):
         for stream in stream_names
         for topic in topic_names
     }
+
+
+def camera_component_names(context):
+    """Resolve an absolute container/topic root and a namespace for camera helpers."""
+    name = LaunchConfiguration("name").perform(context).strip("/")
+    namespace = LaunchConfiguration("namespace").perform(context).strip("/")
+    root = "/" + "/".join(part for part in (namespace, name) if part)
+    return root + "_container", root, root

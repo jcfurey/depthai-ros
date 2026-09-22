@@ -38,6 +38,7 @@ std::string DriverParamHandler::getPipelineAutoCalibrationMode() {
     throw std::invalid_argument("Invalid driver.i_pipeline_auto_calibration_mode parameter type. Use OFF, ON_START, CONTINUOUS, empty, true, or false.");
 }
 void DriverParamHandler::declareParams() {
+    declareAndLogParam<int>("i_connection_timeout", 30, getRangedIntDescriptor(1, 300));
     declareAndLogParam<bool>("i_enable_ir", true);
     declareAndLogParam<std::string>("i_usb_speed", "SUPER");
     declareAndLogParam<std::string>("i_device_id", "");

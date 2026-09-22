@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.22)
+project(depthai_install_consumer LANGUAGES CXX)
+# Run a separate configure for each package, against an install space. Do not
+# supply source/build includes or find transitive dependencies here.
+set(CONSUMER_PACKAGE depthai_bridge CACHE STRING "Package whose public export to verify")
+if(CONSUMER_PACKAGE STREQUAL "depthai_bridge")
+  set(source bridge.cpp)
+elseif(CONSUMER_PACKAGE STREQUAL "depthai_filters")
+  set(source filter.cpp)
+elseif(CONSUMER_PACKAGE STREQUAL "depthai_ros_driver")
+  set(source driver.cpp)
+else()
+  message(FATAL_ERROR "Unknown consumer package: ${CONSUMER_PACKAGE}")
+endif()
+find_package(${CONSUMER_PACKAGE} REQUIRED)
+add_executable(consumer ${source})
+target_link_libraries(consumer PRIVATE ${CONSUMER_PACKAGE}::${CONSUMER_PACKAGE})

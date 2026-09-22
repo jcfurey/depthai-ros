@@ -1,11 +1,13 @@
 #include "depthai_ros_driver/driver.hpp"
 
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 
 #include "depthai/device/Device.hpp"
 #include "depthai/pipeline/Pipeline.hpp"
 #include "depthai_bridge/TFPublisher.hpp"
+#include "depthai_ros_driver/managed_lifecycle.hpp"
 #include "depthai_ros_driver/pipeline/pipeline_generator.hpp"
 #include "depthai_ros_driver/utils.hpp"
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
@@ -13,6 +15,8 @@
 
 namespace depthai_ros_driver {
 namespace {
+using LifecycleTransition = lifecycle_msgs::msg::Transition;
+using LifecycleState = lifecycle_msgs::msg::State;
 
 // Post-set callbacks also run for our own defaults. Only user changes should
 // take a stream out of automatic transport management. Keep this per thread so
@@ -47,6 +51,57 @@ Driver::Driver(const rclcpp::NodeOptions& options) : rclcpp::Node("oak", options
     // Close DepthAI queues while ROS publishers and logging are still valid. Setting
     // shutdownRequested first also lets a pending device-discovery loop unwind.
     rclContext = options.context();
+    managedLifecycle = std::make_unique<ManagedLifecycle>(*this, lifecycleMtx, [this](uint8_t transition) { return lifecycleAction(transition); });
+    rcl_interfaces::msg::ParameterDescriptor autostartDescriptor;
+    autostartDescriptor.read_only = true;
+    autostartDescriptor.description = "Automatically configure and activate at startup. Set false for external lifecycle management.";
+    const bool autostart = has_parameter("driver.i_autostart") ? get_parameter("driver.i_autostart").as_bool()
+                                                               : declare_parameter<bool>("driver.i_autostart", true, autostartDescriptor);
+    srvGroup = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+
+#if RCLCPP_VERSION_MAJOR >= 28
+    startSrv = this->create_service<Trigger>(
+        "~/start_driver", std::bind(&Driver::startCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
+    stopSrv = this->create_service<Trigger>(
+        "~/stop_driver", std::bind(&Driver::stopCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
+    startAliasSrv = this->create_service<Trigger>(
+        "~/start", std::bind(&Driver::startCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
+    stopAliasSrv = this->create_service<Trigger>(
+        "~/stop", std::bind(&Driver::stopCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
+    savePipelineSrv = this->create_service<Trigger>(
+        "~/save_pipeline", std::bind(&Driver::savePipelineCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
+    saveCalibSrv = this->create_service<Trigger>(
+        "~/save_calibration", std::bind(&Driver::saveCalibCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
+#else
+    startSrv = this->create_service<Trigger>("~/start_driver",
+                                             std::bind(&Driver::startCB, this, std::placeholders::_1, std::placeholders::_2),
+                                             rclcpp::ServicesQoS().get_rmw_qos_profile(),
+                                             srvGroup);
+    stopSrv = this->create_service<Trigger>(
+        "~/stop_driver", std::bind(&Driver::stopCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS().get_rmw_qos_profile(), srvGroup);
+    startAliasSrv = this->create_service<Trigger>(
+        "~/start", std::bind(&Driver::startCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS().get_rmw_qos_profile(), srvGroup);
+    stopAliasSrv = this->create_service<Trigger>(
+        "~/stop", std::bind(&Driver::stopCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS().get_rmw_qos_profile(), srvGroup);
+    savePipelineSrv = this->create_service<Trigger>("~/save_pipeline",
+                                                    std::bind(&Driver::savePipelineCB, this, std::placeholders::_1, std::placeholders::_2),
+                                                    rclcpp::ServicesQoS().get_rmw_qos_profile(),
+                                                    srvGroup);
+    saveCalibSrv = this->create_service<Trigger>("~/save_calibration",
+                                                 std::bind(&Driver::saveCalibCB, this, std::placeholders::_1, std::placeholders::_2),
+                                                 rclcpp::ServicesQoS().get_rmw_qos_profile(),
+                                                 srvGroup);
+#endif
+
+    diagSub = this->create_subscription<diagnostic_msgs::msg::DiagnosticArray>("/diagnostics", 10, std::bind(&Driver::diagCB, this, std::placeholders::_1));
+    statusPublisher = create_publisher<diagnostic_msgs::msg::DiagnosticArray>("/diagnostics", 10);
+    statusTimer = create_wall_timer(std::chrono::seconds(1), [this]() { publishStatus(); });
+    parameterTimer = create_wall_timer(std::chrono::milliseconds(20), [this]() { applyPendingParameters(); });
+    startTimer = create_wall_timer(std::chrono::seconds(1), [this, autostart]() {
+        startTimer->cancel();
+        if(autostart && !shutdownRequested) start();
+    });
+    RCLCPP_INFO(get_logger(), "Driver lifecycle services ready (%s).", autostart ? "autostart enabled" : "waiting for configure/activate");
     preShutdownCBHandle = rclContext->add_pre_shutdown_callback([this]() {
         shutdownRequested = true;
         try {
@@ -55,77 +110,18 @@ Driver::Driver(const rclcpp::NodeOptions& options) : rclcpp::Node("oak", options
             RCLCPP_ERROR(get_logger(), "Failed to stop driver during shutdown: %s", e.what());
         }
     });
-    startTimer = this->create_wall_timer(std::chrono::seconds(1), [this]() {
-        // Prevent starting multiple times when not using a static executor.
-        if(!starting.exchange(true)) {
-            try {
-                start();
-            } catch(const std::exception& e) {
-                RCLCPP_ERROR(get_logger(), "Driver startup failed: %s", e.what());
-                starting = false;
-                return;
-            }
-            if(!camRunning) {
-                starting = false;
-                return;
-            }
-            srvGroup = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
-
-#if RCLCPP_VERSION_MAJOR >= 28
-            startSrv = this->create_service<Trigger>(
-                "~/start_driver", std::bind(&Driver::startCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
-            stopSrv = this->create_service<Trigger>(
-                "~/stop_driver", std::bind(&Driver::stopCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
-            startAliasSrv = this->create_service<Trigger>(
-                "~/start", std::bind(&Driver::startCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
-            stopAliasSrv = this->create_service<Trigger>(
-                "~/stop", std::bind(&Driver::stopCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
-            savePipelineSrv = this->create_service<Trigger>(
-                "~/save_pipeline", std::bind(&Driver::savePipelineCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
-            saveCalibSrv = this->create_service<Trigger>(
-                "~/save_calibration", std::bind(&Driver::saveCalibCB, this, std::placeholders::_1, std::placeholders::_2), rclcpp::ServicesQoS(), srvGroup);
-#else
-            startSrv = this->create_service<Trigger>("~/start_driver",
-                                                     std::bind(&Driver::startCB, this, std::placeholders::_1, std::placeholders::_2),
-                                                     rclcpp::ServicesQoS().get_rmw_qos_profile(),
-                                                     srvGroup);
-            stopSrv = this->create_service<Trigger>("~/stop_driver",
-                                                    std::bind(&Driver::stopCB, this, std::placeholders::_1, std::placeholders::_2),
-                                                    rclcpp::ServicesQoS().get_rmw_qos_profile(),
-                                                    srvGroup);
-            startAliasSrv = this->create_service<Trigger>("~/start",
-                                                          std::bind(&Driver::startCB, this, std::placeholders::_1, std::placeholders::_2),
-                                                          rclcpp::ServicesQoS().get_rmw_qos_profile(),
-                                                          srvGroup);
-            stopAliasSrv = this->create_service<Trigger>("~/stop",
-                                                         std::bind(&Driver::stopCB, this, std::placeholders::_1, std::placeholders::_2),
-                                                         rclcpp::ServicesQoS().get_rmw_qos_profile(),
-                                                         srvGroup);
-            savePipelineSrv = this->create_service<Trigger>("~/save_pipeline",
-                                                            std::bind(&Driver::savePipelineCB, this, std::placeholders::_1, std::placeholders::_2),
-                                                            rclcpp::ServicesQoS().get_rmw_qos_profile(),
-                                                            srvGroup);
-            saveCalibSrv = this->create_service<Trigger>("~/save_calibration",
-                                                         std::bind(&Driver::saveCalibCB, this, std::placeholders::_1, std::placeholders::_2),
-                                                         rclcpp::ServicesQoS().get_rmw_qos_profile(),
-                                                         srvGroup);
-#endif
-
-            diagSub =
-                this->create_subscription<diagnostic_msgs::msg::DiagnosticArray>("/diagnostics", 10, std::bind(&Driver::diagCB, this, std::placeholders::_1));
-            RCLCPP_INFO(get_logger(), "Driver ready!");
-            startTimer->cancel();
-        }
-    });
 }
 
 Driver::~Driver() {
     startTimer->cancel();
+    parameterTimer->cancel();
+    statusTimer->cancel();
     if(rclContext) {
         rclContext->remove_pre_shutdown_callback(preShutdownCBHandle);
     }
     shutdownRequested = true;
     stop();
+    managedLifecycle.reset();
 }
 
 std::shared_ptr<rclcpp::Node> Driver::getNodeHandle() {
@@ -146,7 +142,6 @@ void Driver::onConfigure() {
     configureTransportDefaults();
     createPipeline();
     setupQueues();
-    setIR();
     // If model name not set get one from the device
     std::string camModel = ph->getParam<std::string>("i_tf_device_model");
     if(camModel.empty()) {
@@ -177,8 +172,7 @@ void Driver::onConfigure() {
             RCLCPP_ERROR(get_logger(), "Could not publish TF from device calibration: %s. Camera streaming will continue without calibration TF.", e.what());
         }
     }
-    pipeline->start();
-    camRunning = true;
+    configurationDirty = false;
     const auto* rosDistro = std::getenv("ROS_DISTRO");
     RCLCPP_INFO(get_logger(),
                 "If you detect any issues with %s release, please report "
@@ -188,11 +182,14 @@ void Driver::onConfigure() {
 
 void Driver::diagCB(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg) {
     std::lock_guard<std::recursive_mutex> lock(lifecycleMtx);
-    if(!ph || shutdownRequested) {
+    if(!ph || shutdownRequested || !camRunning) {
         return;
     }
     for(const auto& status : msg->status) {
-        if(status.name == get_name() + std::string(": sys_logger")) {
+        const std::string suffix = ": sys_logger";
+        const std::string hardwarePrefix = std::string(get_fully_qualified_name()) + "_";
+        if(status.name.size() >= suffix.size() && status.name.compare(status.name.size() - suffix.size(), suffix.size(), suffix) == 0
+           && status.hardware_id.rfind(hardwarePrefix, 0) == 0) {
             if(status.level == diagnostic_msgs::msg::DiagnosticStatus::ERROR) {
                 RCLCPP_ERROR(get_logger(), "Driver diagnostics error: %s", status.message.c_str());
                 if(ph->getParam<bool>("i_restart_on_diagnostics_error")) {
@@ -209,24 +206,52 @@ void Driver::start() {
 }
 
 void Driver::startImpl() {
-    if(shutdownRequested) {
-        return;
+    if(shutdownRequested || !managedLifecycle) return;
+    if(managedLifecycle->state() == LifecycleState::PRIMARY_STATE_UNCONFIGURED) {
+        if(!managedLifecycle->change(LifecycleTransition::TRANSITION_CONFIGURE)) return;
     }
-    RCLCPP_INFO(this->get_logger(), "Starting driver.");
-    if(camRunning) {
-        RCLCPP_INFO(this->get_logger(), "Driver is already running.");
-        return;
+    if(managedLifecycle->state() == LifecycleState::PRIMARY_STATE_INACTIVE) {
+        managedLifecycle->change(LifecycleTransition::TRANSITION_ACTIVATE);
     }
-    try {
+}
+
+bool Driver::lifecycleAction(uint8_t transition) {
+    if(transition == LifecycleTransition::TRANSITION_CONFIGURE) {
         onConfigure();
-    } catch(...) {
+        if(!pipeline || shutdownRequested) throw std::runtime_error("Camera configuration was interrupted");
+    } else if(transition == LifecycleTransition::TRANSITION_ACTIVATE) {
+        if(shutdownRequested) return false;
+        if(configurationDirty || !pipeline) {
+            stopImpl();
+            onConfigure();
+        }
+        if(!pipeline || shutdownRequested) throw std::runtime_error("Camera activation was interrupted");
+        setIR();
+        pipeline->start();
+        camRunning = true;
+        parameterApplyError.clear();
+        RCLCPP_INFO(get_logger(), "Driver active; camera streaming.");
+    } else {
+        // SDK pipelines are rebuilt on reactivation. Fully drain producers and
+        // release device ownership while inactive, cleaned up, or in error.
         stopImpl();
-        throw;
     }
+    return true;
 }
 
 void Driver::stop() {
     std::lock_guard<std::recursive_mutex> lock(lifecycleMtx);
+    if(managedLifecycle) {
+        const auto state = managedLifecycle->state();
+        if(shutdownRequested && state >= LifecycleState::PRIMARY_STATE_UNCONFIGURED && state <= LifecycleState::PRIMARY_STATE_ACTIVE) {
+            managedLifecycle->change(LifecycleTransition::TRANSITION_UNCONFIGURED_SHUTDOWN + state - LifecycleState::PRIMARY_STATE_UNCONFIGURED);
+            return;
+        }
+        if(state == LifecycleState::PRIMARY_STATE_ACTIVE) {
+            managedLifecycle->change(LifecycleTransition::TRANSITION_DEACTIVATE);
+            return;
+        }
+    }
     stopImpl();
 }
 
@@ -261,6 +286,10 @@ void Driver::stopImpl() {
             }
         }
     }
+    {
+        std::lock_guard<std::mutex> lock(pendingParamsMtx);
+        pendingParams.clear();
+    }
     tfPub.reset();
     generator.reset();
     pipeline.reset();
@@ -274,9 +303,11 @@ void Driver::stopImpl() {
 void Driver::restart() {
     std::lock_guard<std::recursive_mutex> lock(lifecycleMtx);
     RCLCPP_WARN(get_logger(), "Restarting driver");
-    stopImpl();
+    ++restartCount;
+    stop();
     startImpl();
     if(!camRunning) {
+        ++restartFailures;
         RCLCPP_ERROR(get_logger(), "Restarting driver failed.");
     }
 }
@@ -489,7 +520,9 @@ void Driver::setupQueues() {}
 
 bool Driver::startDevice() {
     rclcpp::Rate r(1.0);
-    while(rclcpp::ok() && !shutdownRequested && !device) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(ph->getParam<int>("i_connection_timeout"));
+    while(rclcpp::ok(rclContext) && !shutdownRequested && !device) {
+        if(std::chrono::steady_clock::now() >= deadline) throw std::runtime_error("Device discovery/connection deadline exceeded");
         const auto deviceId = ph->getParam<std::string>("i_device_id");
         const auto ip = ph->getParam<std::string>("i_ip");
         const auto usbId = ph->getParam<std::string>("i_usb_port_id");
@@ -616,34 +649,18 @@ rcl_interfaces::msg::SetParametersResult Driver::parameterCB(const std::vector<r
         return res;
     }
     res.successful = true;
-    if(!camRunning || !device || !generator) {
-        RCLCPP_DEBUG(get_logger(), "Driver is not running; parameter changes will be applied on next start.");
-        return res;
-    }
     try {
-        bool hasIR = true;
-        if(platform == dai::Platform::RVC2) {
-            try {
-                hasIR = !device->getIrDrivers().empty();
-            } catch(const std::exception& e) {
-                hasIR = false;
-                RCLCPP_WARN(get_logger(), "Could not query IR capabilities: %s. IR controls will remain disabled.", e.what());
-            }
-        }
         for(const auto& p : params) {
-            if(ph->getParam<bool>("i_enable_ir") && hasIR) {
-                if(p.get_name() == ph->getFullParamName("r_laser_dot_intensity")) {
-                    const float laserdotIntensity = p.get_value<float>();
-                    device->setIrLaserDotProjectorIntensity(laserdotIntensity);
-                } else if(p.get_name() == ph->getFullParamName("r_floodlight_intensity")) {
-                    const float floodlightIntensity = p.get_value<float>();
-                    device->setIrFloodLightIntensity(floodlightIntensity);
-                }
+            if(camRunning && (p.get_name().find(".i_") != std::string::npos || p.get_name().rfind("diagnostics.", 0) == 0) && transportDefaultsOwner != this) {
+                throw std::invalid_argument(p.get_name() + " changes require an inactive driver; deactivate first");
+            }
+            if(p.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE && !std::isfinite(p.as_double())) {
+                throw std::invalid_argument(p.get_name() + " must be finite");
             }
         }
-        generator->updateParams(params);
+        // Build/validate all control messages before ROS commits anything. No SDK writes here.
+        if(generator && camRunning) generator->validateParams(params);
     } catch(const std::exception& e) {
-        RCLCPP_ERROR(get_logger(), "Parameter update failed: %s", e.what());
         res.successful = false;
         res.reason = e.what();
     }
@@ -657,9 +674,72 @@ void Driver::parametersAppliedCB(const std::vector<rclcpp::Parameter>& params) {
     // Track only committed changes, including an explicit value equal to the
     // current default. Do not take lifecycleMtx while ROS holds its parameter
     // mutex: startup may already be waiting for that mutex.
-    std::lock_guard<std::mutex> lock(transportParamsMtx);
+    {
+        std::lock_guard<std::mutex> lock(transportParamsMtx);
+        for(const auto& param : params) transportManagedParams.erase(param.get_name());
+    }
+    std::lock_guard<std::mutex> lock(pendingParamsMtx);
     for(const auto& param : params) {
-        transportManagedParams.erase(param.get_name());
+        if(param.get_name().find(".i_") != std::string::npos || param.get_name().rfind("diagnostics.", 0) == 0) configurationDirty = true;
+        if(camRunning && param.get_name().find(".r_") != std::string::npos) {
+            // Retain only the latest committed value; bound pending work by parameter count.
+            auto it = std::find_if(pendingParams.begin(), pendingParams.end(), [&](const auto& p) { return p.get_name() == param.get_name(); });
+            if(it == pendingParams.end())
+                pendingParams.push_back(param);
+            else
+                *it = param;
+        }
+    }
+}
+
+void Driver::publishStatus() {
+    std::lock_guard<std::recursive_mutex> lock(lifecycleMtx);
+    diagnostic_msgs::msg::DiagnosticArray message;
+    message.header.stamp = now();
+    diagnostic_msgs::msg::DiagnosticStatus status;
+    status.name = std::string(get_name()) + ": driver";
+    status.hardware_id = get_fully_qualified_name();
+    const bool connected = camRunning && pipeline && pipeline->isRunning();
+    status.level = parameterApplyError.empty() && (!camRunning || connected) ? status.OK : status.ERROR;
+    status.message = !parameterApplyError.empty() ? "Hardware parameter apply failed: " + parameterApplyError
+                     : connected                  ? "Streaming"
+                     : camRunning                 ? "Pipeline stopped unexpectedly"
+                                                  : "Not streaming";
+    auto add = [&](const std::string& key, const std::string& value) {
+        diagnostic_msgs::msg::KeyValue entry;
+        entry.key = key;
+        entry.value = value;
+        status.values.push_back(entry);
+    };
+    add("lifecycle_state_id", std::to_string(managedLifecycle->state()));
+    add("connected", connected ? "true" : "false");
+    add("restarts", std::to_string(restartCount));
+    add("restart_failures", std::to_string(restartFailures));
+    message.status.push_back(status);
+    statusPublisher->publish(message);
+    if(camRunning && !connected && ph && ph->getParam<bool>("i_restart_on_diagnostics_error")) restart();
+}
+
+void Driver::applyPendingParameters() {
+    std::lock_guard<std::recursive_mutex> lock(lifecycleMtx);
+    std::vector<rclcpp::Parameter> params;
+    {
+        std::lock_guard<std::mutex> pendingLock(pendingParamsMtx);
+        params.swap(pendingParams);
+    }
+    if(params.empty() || !camRunning || !device || !generator) return;
+    try {
+        generator->validateParams(params);
+        if(std::any_of(params.begin(), params.end(), [](const auto& p) {
+               return p.get_name() == "driver.r_laser_dot_intensity" || p.get_name() == "driver.r_floodlight_intensity";
+           }))
+            setIR();
+        generator->updateParams(params);
+        parameterApplyError.clear();
+    } catch(const std::exception& error) {
+        parameterApplyError = error.what();
+        RCLCPP_ERROR(get_logger(), "Committed parameter values could not be applied to hardware; deactivating: %s", error.what());
+        stop();
     }
 }
 

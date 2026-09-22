@@ -83,7 +83,7 @@ inline rcl_interfaces::msg::ParameterDescriptor getRangedFloatDescriptor(float m
 class BaseParamHandler {
    public:
     BaseParamHandler(std::shared_ptr<rclcpp::Node> node, const std::string& name, const std::string& deviceName, bool rsCompat)
-        : baseName(name), deviceName(deviceName), rsCompat(rsCompat), baseNode(node){};
+        : baseName(name), deviceName(deviceName), rsCompat(rsCompat), baseNode(node) {};
     virtual ~BaseParamHandler() = default;
     std::string getName() {
         return baseName;
@@ -156,7 +156,10 @@ class BaseParamHandler {
             }
             return getParam<T>(paramName);
         } else {
-            auto val = baseNode->declare_parameter<T>(fullName, value);
+            rcl_interfaces::msg::ParameterDescriptor descriptor;
+            descriptor.description = paramName.rfind("i_", 0) == 0 ? "Pipeline setting; change while the driver is inactive."
+                                                                   : "Runtime setting; applied to hardware after the parameter update commits.";
+            auto val = baseNode->declare_parameter<T>(fullName, value, descriptor);
             logParam(fullName, val);
             return val;
         }
@@ -172,7 +175,10 @@ class BaseParamHandler {
             }
             return getParam<T>(paramName);
         } else {
-            auto val = baseNode->declare_parameter<T>(fullName, value);
+            rcl_interfaces::msg::ParameterDescriptor descriptor;
+            descriptor.description = paramName.rfind("i_", 0) == 0 ? "Pipeline setting; change while the driver is inactive."
+                                                                   : "Runtime setting; applied to hardware after the parameter update commits.";
+            auto val = baseNode->declare_parameter<T>(fullName, value, descriptor);
             logParam(fullName, val);
             return val;
         }
@@ -187,6 +193,9 @@ class BaseParamHandler {
             }
             return getParam<T>(paramName);
         } else {
+            if(descriptor.description.empty())
+                descriptor.description =
+                    paramName.rfind("i_", 0) == 0 ? "Pipeline setting; change while the driver is inactive." : "Runtime setting; applied after commit.";
             auto val = baseNode->declare_parameter<T>(fullName, value, descriptor);
             logParam(fullName, val);
             return val;
@@ -205,6 +214,9 @@ class BaseParamHandler {
             }
             return getParam<T>(paramName);
         } else {
+            if(descriptor.description.empty())
+                descriptor.description =
+                    paramName.rfind("i_", 0) == 0 ? "Pipeline setting; change while the driver is inactive." : "Runtime setting; applied after commit.";
             auto val = baseNode->declare_parameter<T>(fullName, value, descriptor);
             logParam(fullName, val);
             return val;
