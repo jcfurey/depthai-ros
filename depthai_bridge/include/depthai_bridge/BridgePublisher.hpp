@@ -1,6 +1,9 @@
 #pragma once
+#include <atomic>
 #include <deque>
+#include <mutex>
 #include <rclcpp/clock.hpp>
+#include <stdexcept>
 #include <tf2_ros/transform_broadcaster.hpp>
 #include <thread>
 #include <type_traits>
@@ -50,7 +53,7 @@ class BridgePublisher {
                     std::shared_ptr<rclcpp::Node> node,
                     std::string rosTopic,
                     ConvertFunc converter,
-                    rclcpp::QoS qosSetting = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable(),
+                    rclcpp::QoS qosSetting = rclcpp::QoS(rclcpp::KeepLast(1)).reliable(),
                     bool lazyPublisher = true);
 
     /**
@@ -105,7 +108,11 @@ class BridgePublisher {
      */
     typename rclcpp::Publisher<RosMsg>::SharedPtr advertise(int queueSize, std::false_type);
 
-    BridgePublisher(const BridgePublisher& other);
+    BridgePublisher(const BridgePublisher&) = delete;
+    BridgePublisher& operator=(const BridgePublisher&) = delete;
+    // Stop and drain before destroying any state captured by the converter.
+    // Do not call stop() or destroy this object from its own conversion callback.
+    void stop();
 
     void addPublisherCallback();
 
@@ -135,12 +142,19 @@ class BridgePublisher {
     std::shared_ptr<rclcpp::Node> node;
     rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr cameraInfoPublisher;
 
-    image_transport::ImageTransport it;
     ImageMsgs::CameraInfo cameraInfoData;
     CustomPublisher rosPublisher;
     std::shared_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
     bool pubTransform = false;
 
+    struct CallbackState {
+        std::mutex mutex;
+        BridgePublisher* owner = nullptr;
+    };
+    std::shared_ptr<CallbackState> callbackState = std::make_shared<CallbackState>();
+    std::mutex controlMutex;
+    std::atomic<bool> stopRequested{false};
+    int callbackId = -1;
     std::thread readingThread;
     std::string rosTopic, camInfoFrameId, cameraName, cameraParamUri;
     std::unique_ptr<camera_info_manager::CameraInfoManager> camInfoManager;
@@ -159,12 +173,19 @@ BridgePublisher<RosMsg, DaiMsg>::BridgePublisher(std::shared_ptr<dai::MessageQue
                                                  ConvertFunc converter,
                                                  rclcpp::QoS qosSetting,
                                                  bool lazyPublisher)
-    : daiMessageQueue(daiMessageQueue), node(node), converter(converter), it(node), rosTopic(rosTopic), lazyPublisher(lazyPublisher) {
+    : daiMessageQueue(daiMessageQueue), node(node), converter(converter), rosTopic(rosTopic), lazyPublisher(lazyPublisher) {
     if constexpr(std::is_same_v<RosMsg, geometry_msgs::msg::TransformStamped>) {
         this->lazyPublisher = false;
         rosPublisher = std::make_shared<tf2_ros::TransformBroadcaster>(node);
+    } else if constexpr(std::is_same_v<RosMsg, ImageMsgs::Image>) {
+        camInfoManager = std::make_unique<camera_info_manager::CameraInfoManager>(node.get(), "camera");
+        rclcpp::PublisherOptions options;
+        options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
+        rosPublisher = std::make_shared<image_transport::CameraPublisher>(image_transport::create_camera_publisher(*node, rosTopic, qosSetting, options));
     } else {
-        rosPublisher = node->create_publisher<RosMsg>(rosTopic, qosSetting);
+        rclcpp::PublisherOptions options;
+        options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
+        rosPublisher = node->create_publisher<RosMsg>(rosTopic, qosSetting, options);
     }
 }
 
@@ -180,12 +201,16 @@ BridgePublisher<RosMsg, DaiMsg>::BridgePublisher(std::shared_ptr<dai::MessageQue
     : daiMessageQueue(daiMessageQueue),
       node(node),
       converter(converter),
-      it(node),
       rosTopic(rosTopic),
       cameraParamUri(cameraParamUri),
       cameraName(cameraName),
       lazyPublisher(lazyPublisher) {
-    rosPublisher = advertise(qosHistoryDepth, std::is_same<RosMsg, ImageMsgs::Image>{});
+    if constexpr(std::is_same_v<RosMsg, geometry_msgs::msg::TransformStamped>) {
+        this->lazyPublisher = false;
+        rosPublisher = std::make_shared<tf2_ros::TransformBroadcaster>(node);
+    } else {
+        rosPublisher = advertise(qosHistoryDepth, std::is_same<RosMsg, ImageMsgs::Image>{});
+    }
 }
 
 template <class RosMsg, class DaiMsg>
@@ -200,18 +225,22 @@ BridgePublisher<RosMsg, DaiMsg>::BridgePublisher(std::shared_ptr<dai::MessageQue
     : daiMessageQueue(daiMessageQueue),
       node(node),
       converter(converter),
-      it(node),
       rosTopic(rosTopic),
       cameraInfoData(cameraInfoData),
       cameraName(cameraName),
       lazyPublisher(lazyPublisher) {
-    rosPublisher = advertise(qosHistoryDepth, std::is_same<RosMsg, ImageMsgs::Image>{});
+    if constexpr(std::is_same_v<RosMsg, geometry_msgs::msg::TransformStamped>) {
+        this->lazyPublisher = false;
+        rosPublisher = std::make_shared<tf2_ros::TransformBroadcaster>(node);
+    } else {
+        rosPublisher = advertise(qosHistoryDepth, std::is_same<RosMsg, ImageMsgs::Image>{});
+    }
 }
 
 template <class RosMsg, class DaiMsg>
 typename rclcpp::Publisher<RosMsg>::SharedPtr BridgePublisher<RosMsg, DaiMsg>::advertise(int queueSize, std::false_type) {
     rclcpp::PublisherOptions options;
-    options.qos_overriding_options = rclcpp::QosOverridingOptions();
+    options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
     if(!cameraName.empty()) {
         isImageMessage = true;
         camInfoManager = std::make_unique<camera_info_manager::CameraInfoManager>(node.get(), cameraName, cameraParamUri);
@@ -225,17 +254,11 @@ typename rclcpp::Publisher<RosMsg>::SharedPtr BridgePublisher<RosMsg, DaiMsg>::a
 
 template <class RosMsg, class DaiMsg>
 std::shared_ptr<image_transport::CameraPublisher> BridgePublisher<RosMsg, DaiMsg>::advertise(int queueSize, std::true_type) {
-    if(!cameraName.empty()) {
-        isImageMessage = true;
-        camInfoManager = std::make_unique<camera_info_manager::CameraInfoManager>(node.get(), cameraName, cameraParamUri);
-        if(cameraParamUri.empty()) {
-            camInfoManager->setCameraInfo(cameraInfoData);
-        }
-        rclcpp::PublisherOptions options;
-        options.qos_overriding_options = rclcpp::QosOverridingOptions();
-        cameraInfoPublisher = node->create_publisher<ImageMsgs::CameraInfo>(cameraName + "/camera_info", queueSize, options);
-    }
-    return std::make_shared<image_transport::CameraPublisher>(it.advertiseCamera(rosTopic, queueSize));
+    camInfoManager = std::make_unique<camera_info_manager::CameraInfoManager>(node.get(), cameraName.empty() ? "camera" : cameraName, cameraParamUri);
+    if(cameraParamUri.empty()) camInfoManager->setCameraInfo(cameraInfoData);
+    rclcpp::PublisherOptions options;
+    options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
+    return std::make_shared<image_transport::CameraPublisher>(image_transport::create_camera_publisher(*node, rosTopic, rclcpp::QoS(queueSize), options));
 }
 
 template <class RosMsg, class DaiMsg>
@@ -246,28 +269,43 @@ void BridgePublisher<RosMsg, DaiMsg>::daiCallback(const std::string& name, std::
 
 template <class RosMsg, class DaiMsg>
 void BridgePublisher<RosMsg, DaiMsg>::startPublisherThread() {
-    if(isCallbackAdded) {
-        throw std::runtime_error(
-            "addPublisherCallback() function adds a callback to the"
-            "depthai which handles the publishing so no need to start"
-            "the thread using startPublisherThread() ");
-    }
-
-    readingThread = std::thread([&]() {
-        while(rclcpp::ok()) {
-            auto daiDataPtr = daiMessageQueue->tryGet<DaiMsg>();
-            if(daiDataPtr == nullptr) {
-                continue;
+    std::lock_guard<std::mutex> lock(controlMutex);
+    if(isCallbackAdded || readingThread.joinable()) throw std::logic_error("BridgePublisher is already started");
+    if(!daiMessageQueue) throw std::invalid_argument("BridgePublisher requires a queue");
+    stopRequested = false;
+    readingThread = std::thread([this]() {
+        while(!stopRequested && rclcpp::ok(node->get_node_base_interface()->get_context())) {
+            try {
+                bool timedOut = false;
+                auto data = daiMessageQueue->template get<DaiMsg>(std::chrono::milliseconds(50), timedOut);
+                if(data && !stopRequested) publishHelper(data);
+            } catch(const std::exception& e) {
+                if(!stopRequested) RCLCPP_WARN(node->get_logger(), "Bridge worker stopped: %s", e.what());
+                break;
             }
-
-            publishHelper(daiDataPtr);
         }
     });
 }
 
 template <class RosMsg, class DaiMsg>
 void BridgePublisher<RosMsg, DaiMsg>::addPublisherCallback() {
-    daiMessageQueue->addCallback(std::bind(&BridgePublisher<RosMsg, DaiMsg>::daiCallback, this, std::placeholders::_1, std::placeholders::_2));
+    std::lock_guard<std::mutex> lock(controlMutex);
+    if(isCallbackAdded || readingThread.joinable()) throw std::logic_error("BridgePublisher is already started");
+    if(!daiMessageQueue) throw std::invalid_argument("BridgePublisher requires a queue");
+    stopRequested = false;
+    {
+        std::lock_guard<std::mutex> callbackLock(callbackState->mutex);
+        callbackState->owner = this;
+    }
+    callbackId = daiMessageQueue->addCallback([state = callbackState](const std::string& name, std::shared_ptr<dai::ADatatype> data) {
+        std::lock_guard<std::mutex> callbackLock(state->mutex);
+        if(!state->owner) return;
+        try {
+            state->owner->daiCallback(name, data);
+        } catch(const std::exception& e) {
+            RCLCPP_ERROR_THROTTLE(state->owner->node->get_logger(), *state->owner->node->get_clock(), 5000, "Bridge conversion failed: %s", e.what());
+        }
+    });
     isCallbackAdded = true;
 }
 
@@ -279,39 +317,32 @@ void BridgePublisher<RosMsg, DaiMsg>::publishTransform(std::shared_ptr<tf2_ros::
 }
 template <class RosMsg, class DaiMsg>
 void BridgePublisher<RosMsg, DaiMsg>::publishHelper(std::shared_ptr<DaiMsg> inDataPtr) {
-    std::deque<RosMsg> opMsgs;
-
-    int mainSubCount = 0;
-    int infoSubCount = 0;
-
-    if(isImageMessage) {
-        infoSubCount = node->count_subscribers(cameraName + "/camera_info");
+    if(!inDataPtr) return;
+    size_t mainSubCount = 0;
+    const size_t infoSubCount = cameraInfoPublisher ? cameraInfoPublisher->get_subscription_count() : 0;
+    if constexpr(std::is_same_v<RosMsg, ImageMsgs::Image>) {
+        mainSubCount = rosPublisher->getNumSubscribers();
+    } else if constexpr(std::is_same_v<RosMsg, geometry_msgs::msg::TransformStamped>) {
+        mainSubCount = 1;
+    } else {
+        mainSubCount = rosPublisher->get_subscription_count();
     }
-    mainSubCount = node->count_subscribers(rosTopic);
-
-    if(!lazyPublisher || mainSubCount > 0 || infoSubCount > 0) {
-        converter(inDataPtr, opMsgs);
-
-        while(opMsgs.size()) {
-            RosMsg currMsg = opMsgs.front();
-            if(!lazyPublisher || mainSubCount > 0) {
-                if constexpr(std::is_same_v<RosMsg, ImageMsgs::Image>) {
-                    auto localCameraInfo = camInfoManager->getCameraInfo();
-                    localCameraInfo.header.stamp = currMsg.header.stamp;
-                    localCameraInfo.header.frame_id = currMsg.header.frame_id;
-                    std::dynamic_pointer_cast<image_transport::CameraPublisher>(rosPublisher)->publish(currMsg, localCameraInfo);
-                } else if constexpr(std::is_same_v<RosMsg, geometry_msgs::msg::TransformStamped>) {
-                    // message stamp might be too late by the time of publishing
-                    currMsg.header.stamp = node->get_clock()->now();
-                    publishTransform(rosPublisher, currMsg);
-                }
-
-                else if constexpr(std::is_same_v<RosMsg, nav_msgs::msg::Odometry>) {
+    if(lazyPublisher && mainSubCount == 0 && infoSubCount == 0) return;
+    std::deque<RosMsg> opMsgs;
+    converter(inDataPtr, opMsgs);
+    for(auto& currMsg : opMsgs) {
+        if(!lazyPublisher || mainSubCount > 0) {
+            if constexpr(std::is_same_v<RosMsg, ImageMsgs::Image>) {
+                auto info = camInfoManager->getCameraInfo();
+                info.header = currMsg.header;
+                rosPublisher->publish(currMsg, info);
+            } else if constexpr(std::is_same_v<RosMsg, geometry_msgs::msg::TransformStamped>) {
+                publishTransform(rosPublisher, currMsg);
+            } else {
+                if constexpr(std::is_same_v<RosMsg, nav_msgs::msg::Odometry>) {
                     if(pubTransform) {
                         geometry_msgs::msg::TransformStamped transform;
-                        // message stamp might be too late by the time of publishing
-                        transform.header.stamp = node->get_clock()->now();
-                        transform.header.frame_id = currMsg.header.frame_id;
+                        transform.header = currMsg.header;
                         transform.child_frame_id = currMsg.child_frame_id;
                         transform.transform.translation.x = currMsg.pose.pose.position.x;
                         transform.transform.translation.y = currMsg.pose.pose.position.y;
@@ -319,25 +350,43 @@ void BridgePublisher<RosMsg, DaiMsg>::publishHelper(std::shared_ptr<DaiMsg> inDa
                         transform.transform.rotation = currMsg.pose.pose.orientation;
                         publishTransform(tfBroadcaster, transform);
                     }
-                    rosPublisher->publish(currMsg);
-                } else {
-                    rosPublisher->publish(currMsg);
                 }
+                // Publish after using the header below; no intermediate message copy.
             }
-
-            if(infoSubCount > 0 && (std::is_same_v<RosMsg, ImageMsgs::CompressedImage> || std::is_same_v<RosMsg, FFMPEGMsgs::FFMPEGPacket>)) {
-                auto localCameraInfo = camInfoManager->getCameraInfo();
-                localCameraInfo.header.stamp = currMsg.header.stamp;
-                localCameraInfo.header.frame_id = currMsg.header.frame_id;
-                cameraInfoPublisher->publish(localCameraInfo);
+        }
+        if constexpr(std::is_same_v<RosMsg, ImageMsgs::CompressedImage> || std::is_same_v<RosMsg, FFMPEGMsgs::FFMPEGPacket>) {
+            if(infoSubCount > 0) {
+                auto info = camInfoManager->getCameraInfo();
+                info.header = currMsg.header;
+                cameraInfoPublisher->publish(info);
             }
-            opMsgs.pop_front();
+        }
+        if constexpr(!std::is_same_v<RosMsg, ImageMsgs::Image> && !std::is_same_v<RosMsg, geometry_msgs::msg::TransformStamped>) {
+            if(!lazyPublisher || mainSubCount > 0) rosPublisher->publish(std::make_unique<RosMsg>(std::move(currMsg)));
         }
     }
 }
 
 template <class RosMsg, class DaiMsg>
 BridgePublisher<RosMsg, DaiMsg>::~BridgePublisher() {
+    stop();
+}
+
+template <class RosMsg, class DaiMsg>
+void BridgePublisher<RosMsg, DaiMsg>::stop() {
+    std::lock_guard<std::mutex> lock(controlMutex);
+    stopRequested = true;
+    {
+        // Drain in-flight work, then disable even callbacks already copied by a producer.
+        std::lock_guard<std::mutex> callbackLock(callbackState->mutex);
+        callbackState->owner = nullptr;
+    }
+    // Never hold the callback gate while acquiring the SDK callback registry lock.
+    if(callbackId >= 0) {
+        daiMessageQueue->removeCallback(callbackId);
+        callbackId = -1;
+        isCallbackAdded = false;
+    }
     if(readingThread.joinable()) readingThread.join();
 }
 

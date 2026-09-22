@@ -1,5 +1,7 @@
 #include "depthai_bridge/TransformDataConverter.hpp"
 
+#include <stdexcept>
+
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 
@@ -90,6 +92,7 @@ void TransformDataConverter::setCovariance(std::array<double, 36> covariance) {
 }
 
 void TransformDataConverter::setCovariance(std::vector<double> covariance) {
+    if(covariance.size() != cov.size()) throw std::invalid_argument("Covariance requires exactly 36 values");
     std::copy(covariance.begin(), covariance.end(), cov.begin());
 }
 

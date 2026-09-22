@@ -1,5 +1,10 @@
 #include "depthai_bridge/DisparityConverter.hpp"
 
+#include <cmath>
+#include <cstring>
+#include <limits>
+#include <stdexcept>
+
 #include "depthai_bridge/depthaiUtility.hpp"
 
 namespace depthai_bridge {
@@ -10,51 +15,51 @@ DisparityConverter::DisparityConverter(
       focalLength(focalLength),
       baseline(baseline / 100.0),
       minDepth(minDepth / 100.0),
-      maxDepth(maxDepth / 100.0) {}
+      maxDepth(maxDepth / 100.0) {
+    if(!std::isfinite(focalLength) || focalLength <= 0 || !std::isfinite(baseline) || baseline <= 0 || !std::isfinite(minDepth) || minDepth <= 0
+       || !std::isfinite(maxDepth) || maxDepth <= minDepth) {
+        throw std::invalid_argument("Disparity calibration requires positive finite focal length/baseline and 0 < minDepth < maxDepth");
+    }
+}
 
 DisparityConverter::~DisparityConverter() = default;
 
 void DisparityConverter::toRosMsg(std::shared_ptr<dai::ImgFrame> inData, std::deque<DisparityMsgs::DisparityImage>& outDispImageMsgs) {
+    if(!inData || inData->getWidth() <= 0 || inData->getHeight() <= 0) {
+        throw std::invalid_argument("Disparity image must have nonzero dimensions");
+    }
+    const auto type = inData->getType();
+    if(type != dai::ImgFrame::Type::RAW8 && type != dai::ImgFrame::Type::RAW16) {
+        throw std::invalid_argument("Disparity input must be RAW8 or RAW16");
+    }
+    const size_t width = inData->getWidth(), height = inData->getHeight();
+    const size_t bytesPerPixel = type == dai::ImgFrame::Type::RAW8 ? 1 : 2;
+    if(width > std::numeric_limits<uint32_t>::max() / sizeof(float) || height > std::numeric_limits<size_t>::max() / width / sizeof(float)
+       || inData->getData().size() != width * height * bytesPerPixel) {
+        throw std::invalid_argument("Disparity payload does not match its dimensions");
+    }
     DisparityMsgs::DisparityImage outDispImageMsg;
     outDispImageMsg.header = getRosHeader(inData);
     outDispImageMsg.f = focalLength;
+    outDispImageMsg.t = baseline;
     outDispImageMsg.min_disparity = focalLength * baseline / maxDepth;
     outDispImageMsg.max_disparity = focalLength * baseline / minDepth;
-
-    outDispImageMsg.t = baseline / 100.0;  // converting cm to meters
-
-    ImageMsgs::Image& outImageMsg = outDispImageMsg.image;
-    outImageMsg.encoding = sensor_msgs::image_encodings::TYPE_32FC1;
-    outImageMsg.header = outDispImageMsg.header;
-    if(inData->getType() == dai::ImgFrame::Type::RAW8) {
-        outDispImageMsg.delta_d = 1.0;
-        size_t size = inData->getData().size() * sizeof(float);
-        outImageMsg.data.resize(size);
-        outImageMsg.height = inData->getHeight();
-        outImageMsg.width = inData->getWidth();
-        outImageMsg.step = size / inData->getHeight();
-        outImageMsg.is_bigendian = true;
-
-        std::vector<float> convertedData(inData->getData().begin(), inData->getData().end());
-        outImageMsg.data.assign(convertedData.begin(), convertedData.end());
-    } else {
-        outDispImageMsg.delta_d = 1.0 / 32.0;
-        size_t size = inData->getHeight() * inData->getWidth() * sizeof(float);
-        outImageMsg.data.resize(size);
-        outImageMsg.height = inData->getHeight();
-        outImageMsg.width = inData->getWidth();
-        outImageMsg.step = size / inData->getHeight();
-        outImageMsg.is_bigendian = true;
-
-        std::vector<float> convertedData;
-        convertedData.reserve(inData->getHeight() * inData->getWidth());
-
-        std::transform(reinterpret_cast<const int16_t*>(inData->getData().data()),
-                       reinterpret_cast<const int16_t*>(inData->getData().data() + inData->getData().size()),
-                       std::back_inserter(convertedData),
-                       [](int16_t disp) -> float { return static_cast<float>(disp) / 32.0; });
-
-        outImageMsg.data.assign(convertedData.begin(), convertedData.end());
+    outDispImageMsg.delta_d = bytesPerPixel == 1 ? 1.0f : 1.0f / (1u << subpixelFractionalBits);
+    auto& image = outDispImageMsg.image;
+    image.header = outDispImageMsg.header;
+    image.encoding = sensor_msgs::image_encodings::TYPE_32FC1;
+    image.width = width;
+    image.height = height;
+    image.step = width * sizeof(float);
+    image.data.resize(image.step * height);
+    const uint16_t endian = 1;
+    image.is_bigendian = *reinterpret_cast<const uint8_t*>(&endian) == 0;
+    const auto& input = inData->getData();
+    for(size_t i = 0; i < width * height; ++i) {
+        // DepthAI RAW16 disparity samples are unsigned little-endian fixed point.
+        const uint16_t raw = bytesPerPixel == 1 ? input[i] : uint16_t(input[2 * i]) | (uint16_t(input[2 * i + 1]) << 8);
+        const float disparity = raw * outDispImageMsg.delta_d;
+        std::memcpy(image.data.data() + i * sizeof(float), &disparity, sizeof(float));
     }
     outDispImageMsgs.push_back(outDispImageMsg);
     return;
@@ -68,6 +73,11 @@ DisparityImagePtr DisparityConverter::toRosMsgPtr(std::shared_ptr<dai::ImgFrame>
     DisparityImagePtr ptr = std::make_shared<DisparityMsgs::DisparityImage>(msg);
 
     return ptr;
+}
+
+void DisparityConverter::setSubpixelFractionalBits(unsigned int bits) {
+    if(bits < 3 || bits > 5) throw std::invalid_argument("Subpixel disparity requires 3, 4 or 5 fractional bits");
+    subpixelFractionalBits = bits;
 }
 
 // Getter methods

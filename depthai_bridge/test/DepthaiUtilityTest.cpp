@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 
+#include "depthai/pipeline/datatype/EncodedFrame.hpp"
+#include "depthai_bridge/BaseConverter.hpp"
 #include "depthai_bridge/depthaiUtility.hpp"
+#include "rcl/time.h"
 
 namespace depthai_bridge {
 
@@ -57,4 +60,31 @@ TEST(DepthaiUtilityTest, RecognizesLegacyBno08xImus) {
     EXPECT_FALSE(isBno08x("NONE"));
 }
 
+TEST(DepthaiUtilityTest, ConverterUsesInjectedClockAndHandlesSimulationJumps) {
+    auto clock = std::make_shared<rclcpp::Clock>(RCL_ROS_TIME);
+    BaseConverter converter("frame");
+    converter.setClock(clock);
+    const auto capture = std::chrono::steady_clock::now() - std::chrono::milliseconds(50);
+    EXPECT_NEAR((clock->now() - converter.toRosTime(capture)).seconds(), 0.05, 0.02);
+    ASSERT_EQ(rcl_enable_ros_time_override(clock->get_clock_handle()), RCL_RET_OK);
+    ASSERT_EQ(rcl_set_ros_time_override(clock->get_clock_handle(), 10000000000LL), RCL_RET_OK);
+    EXPECT_EQ(converter.toRosTime(capture).nanoseconds(), 10000000000LL);
+    EXPECT_EQ(converter.toRosTime(capture + std::chrono::seconds(3)).nanoseconds(), 10000000000LL);
+    ASSERT_EQ(rcl_set_ros_time_override(clock->get_clock_handle(), 1000000000LL), RCL_RET_OK);
+    EXPECT_EQ(converter.toRosTime(capture).nanoseconds(), 1000000000LL);
+    ASSERT_EQ(rcl_set_ros_time_override(clock->get_clock_handle(), 0), RCL_RET_OK);
+    EXPECT_EQ(converter.toRosTime(capture).nanoseconds(), 0);
+}
+TEST(DepthaiUtilityTest, EncodedFramesUseExposureMetadataWithoutAnImageCast) {
+    BaseConverter converter("optical");
+    auto encoded = std::make_shared<dai::EncodedFrame>();
+    encoded->setTimestamp(std::chrono::steady_clock::now());
+    encoded->cam.exposureTimeUs = 20000;
+    const auto end = rclcpp::Time(converter.getRosHeader(encoded, true, dai::CameraExposureOffset::END).stamp);
+    const auto start = rclcpp::Time(converter.getRosHeader(encoded, true, dai::CameraExposureOffset::START).stamp);
+    const auto middle = rclcpp::Time(converter.getRosHeader(encoded, true, dai::CameraExposureOffset::MIDDLE).stamp);
+    EXPECT_EQ((end - start).nanoseconds(), 20000000);
+    EXPECT_EQ((end - middle).nanoseconds(), 10000000);
+    EXPECT_THROW(converter.getRosHeader(std::make_shared<dai::Buffer>(), true), std::invalid_argument);
+}
 }  // namespace depthai_bridge

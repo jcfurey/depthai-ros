@@ -66,14 +66,16 @@ TEST(SpatialDetectionConverterTest, ToRosVisionMsgTest) {
 
     ASSERT_EQ(opDetectionMsgs.size(), 1);
     ASSERT_EQ(opDetectionMsgs[0].detections.size(), 1);
-    EXPECT_EQ(opDetectionMsgs[0].detections[0].id, "1");
+    EXPECT_EQ(opDetectionMsgs[0].detections[0].id, "");
     EXPECT_EQ(opDetectionMsgs[0].detections[0].results[0].hypothesis.class_id, "test");
     EXPECT_FLOAT_EQ(opDetectionMsgs[0].detections[0].results[0].hypothesis.score, 0.9);
-    EXPECT_FLOAT_EQ(opDetectionMsgs[0].detections[0].bbox.center.position.x, 160);
-    EXPECT_FLOAT_EQ(opDetectionMsgs[0].detections[0].bbox.center.position.y, 120);
-    EXPECT_FLOAT_EQ(opDetectionMsgs[0].detections[0].bbox.size.x, 320);
-    EXPECT_FLOAT_EQ(opDetectionMsgs[0].detections[0].bbox.size.y, 240);
-    EXPECT_FLOAT_EQ(opDetectionMsgs[0].detections[0].bbox.size.z, 0.01);
+    EXPECT_FLOAT_EQ(opDetectionMsgs[0].detections[0].bbox.center.position.x, 0.1);
+    EXPECT_FLOAT_EQ(opDetectionMsgs[0].detections[0].bbox.center.position.y, 0.2);
+    EXPECT_FLOAT_EQ(opDetectionMsgs[0].detections[0].bbox.size.x, 0);
+    EXPECT_FLOAT_EQ(opDetectionMsgs[0].detections[0].bbox.size.y, 0);
+    EXPECT_FLOAT_EQ(opDetectionMsgs[0].detections[0].bbox.size.z, 0);
+    EXPECT_DOUBLE_EQ(opDetectionMsgs[0].detections[0].bbox.center.orientation.w, 1);
+    EXPECT_EQ(opDetectionMsgs[0].detections[0].header, opDetectionMsgs[0].header);
     EXPECT_FLOAT_EQ(opDetectionMsgs[0].detections[0].results[0].pose.pose.position.x, 0.1);
     EXPECT_FLOAT_EQ(opDetectionMsgs[0].detections[0].results[0].pose.pose.position.y, 0.2);
     EXPECT_FLOAT_EQ(opDetectionMsgs[0].detections[0].results[0].pose.pose.position.z, 0.3);

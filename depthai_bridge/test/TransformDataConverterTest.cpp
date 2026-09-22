@@ -99,4 +99,10 @@ TEST(TransformDataConverterTest, FixQuaternionTest) {
     ASSERT_FLOAT_EQ(odomMsg.pose.pose.orientation.w, 1.0);
 }
 
+TEST(TransformDataConverterTest, RejectsWrongCovarianceSize) {
+    TransformDataConverter converter("frame", "child");
+    EXPECT_THROW(converter.setCovariance(std::vector<double>(35)), std::invalid_argument);
+    EXPECT_THROW(converter.setCovariance(std::vector<double>(37)), std::invalid_argument);
+    EXPECT_NO_THROW(converter.setCovariance(std::vector<double>(36)));
+}
 }  // namespace depthai_bridge

@@ -18,7 +18,7 @@ void SpatialDetectionConverter::toRosMsg(std::shared_ptr<dai::SpatialImgDetectio
 
     auto [width, height] = inNetData->transformation->getSize();
     for(int i = 0; i < inNetData->detections.size(); ++i) {
-        int xMin, yMin, xMax, yMax;
+        float xMin, yMin, xMax, yMax;
         if(normalized) {
             xMin = inNetData->detections[i].xmin;
             yMin = inNetData->detections[i].ymin;
@@ -67,42 +67,23 @@ void SpatialDetectionConverter::toRosVisionMsg(std::shared_ptr<dai::SpatialImgDe
     vision_msgs::msg::Detection3DArray opDetectionMsg;
 
     opDetectionMsg.header = getRosHeader(inNetData);
-    opDetectionMsg.detections.resize(inNetData->detections.size());
+    opDetectionMsg.detections.reserve(inNetData->detections.size());
 
-    auto [width, height] = inNetData->transformation->getSize();
-    for(int i = 0; i < inNetData->detections.size(); ++i) {
-        int xMin, yMin, xMax, yMax;
-        if(normalized) {
-            xMin = inNetData->detections[i].xmin;
-            yMin = inNetData->detections[i].ymin;
-            xMax = inNetData->detections[i].xmax;
-            yMax = inNetData->detections[i].ymax;
-        } else {
-            xMin = inNetData->detections[i].xmin * width;
-            yMin = inNetData->detections[i].ymin * height;
-            xMax = inNetData->detections[i].xmax * width;
-            yMax = inNetData->detections[i].ymax * height;
-        }
-
-        float xSize = xMax - xMin;
-        float ySize = yMax - yMin;
-        float xCenter = xMin + xSize / 2;
-        float yCenter = yMin + ySize / 2;
-        opDetectionMsg.detections[i].results.resize(1);
-
-        opDetectionMsg.detections[i].id = std::to_string(inNetData->detections[i].label);
-        opDetectionMsg.detections[i].results[0].hypothesis.class_id = inNetData->detections[i].labelName;
-        opDetectionMsg.detections[i].results[0].hypothesis.score = inNetData->detections[i].confidence;
-        opDetectionMsg.detections[i].bbox.center.position.x = xCenter;
-        opDetectionMsg.detections[i].bbox.center.position.y = yCenter;
-        opDetectionMsg.detections[i].bbox.size.x = xSize;
-        opDetectionMsg.detections[i].bbox.size.y = ySize;
-        opDetectionMsg.detections[i].bbox.size.z = 0.01;
-
-        // converting mm to meters since per ros rep-103 lenght should always be in meters
-        opDetectionMsg.detections[i].results[0].pose.pose.position.x = inNetData->detections[i].spatialCoordinates.x / 1000;
-        opDetectionMsg.detections[i].results[0].pose.pose.position.y = inNetData->detections[i].spatialCoordinates.y / 1000;
-        opDetectionMsg.detections[i].results[0].pose.pose.position.z = inNetData->detections[i].spatialCoordinates.z / 1000;
+    for(const auto& input : inNetData->detections) {
+        auto& detection = opDetectionMsg.detections.emplace_back();
+        detection.header = opDetectionMsg.header;
+        detection.results.resize(1);
+        auto& result = detection.results.front();
+        result.hypothesis.class_id = input.labelName;
+        result.hypothesis.score = input.confidence;
+        result.pose.pose.position.x = input.spatialCoordinates.x / 1000.0;
+        result.pose.pose.position.y = input.spatialCoordinates.y / 1000.0;
+        result.pose.pose.position.z = input.spatialCoordinates.z / 1000.0;
+        result.pose.pose.orientation.w = 1.0;
+        detection.bbox.center = result.pose.pose;
+        // The network supplies a metric position, not a 3D object extent.
+        // Leave size zero (unknown); pixel boxes remain available via toRosMsg().
+        // An untracked detection has no persistent object ID.
     }
 
     opDetectionMsgs.push_back(opDetectionMsg);

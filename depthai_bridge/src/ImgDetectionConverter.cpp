@@ -16,7 +16,7 @@ void ImgDetectionConverter::toRosMsg(std::shared_ptr<dai::ImgDetections> inData,
 
     auto [width, height] = inData->transformation->getSize();
     for(int i = 0; i < inData->detections.size(); ++i) {
-        int xMin, yMin, xMax, yMax;
+        float xMin, yMin, xMax, yMax;
         if(normalized) {
             xMin = inData->detections[i].xmin;
             yMin = inData->detections[i].ymin;
@@ -36,7 +36,8 @@ void ImgDetectionConverter::toRosMsg(std::shared_ptr<dai::ImgDetections> inData,
 
         opDetectionMsg.detections[i].results.resize(1);
 
-        opDetectionMsg.detections[i].id = std::to_string(inData->detections[i].label);
+        opDetectionMsg.detections[i].header = opDetectionMsg.header;
+        opDetectionMsg.detections[i].results[0].pose.pose.orientation.w = 1.0;
         opDetectionMsg.detections[i].results[0].hypothesis.class_id = inData->detections[i].labelName;
         opDetectionMsg.detections[i].results[0].hypothesis.score = inData->detections[i].confidence;
         opDetectionMsg.detections[i].bbox.center.position.x = xCenter;

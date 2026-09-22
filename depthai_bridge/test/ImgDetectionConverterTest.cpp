@@ -31,7 +31,7 @@ TEST(ImgDetectionConverterTest, ToRosMsgTest) {
     ASSERT_EQ(opDetectionMsgs.size(), 1);
     auto& detectionMsg = opDetectionMsgs.front();
     ASSERT_EQ(detectionMsg.detections.size(), 1);
-    ASSERT_EQ(detectionMsg.detections[0].id, "1");
+    ASSERT_EQ(detectionMsg.detections[0].id, "");
     ASSERT_EQ(detectionMsg.detections[0].results[0].hypothesis.class_id, "test");
     ASSERT_FLOAT_EQ(detectionMsg.detections[0].results[0].hypothesis.score, 0.9);
     ASSERT_FLOAT_EQ(detectionMsg.detections[0].bbox.center.position.x, 160);
@@ -61,7 +61,7 @@ TEST(ImgDetectionConverterTest, ToRosMsgPtrTest) {
 
     ASSERT_NE(msgPtr, nullptr);
     ASSERT_EQ(msgPtr->detections.size(), 1);
-    ASSERT_EQ(msgPtr->detections[0].id, "1");
+    ASSERT_EQ(msgPtr->detections[0].id, "");
     ASSERT_EQ(msgPtr->detections[0].results[0].hypothesis.class_id, "test");
     ASSERT_FLOAT_EQ(msgPtr->detections[0].results[0].hypothesis.score, 0.9);
     ASSERT_FLOAT_EQ(msgPtr->detections[0].bbox.center.position.x, 160);
@@ -70,4 +70,17 @@ TEST(ImgDetectionConverterTest, ToRosMsgPtrTest) {
     ASSERT_FLOAT_EQ(msgPtr->detections[0].bbox.size_y, 240);
 }
 
+TEST(ImgDetectionConverterTest, NormalizedCoordinatesKeepFractions) {
+    auto input = std::make_shared<dai::ImgDetections>();
+    input->detections.resize(1);
+    input->detections[0].xmin = 0.25f;
+    input->detections[0].xmax = 0.75f;
+    dai::ImgTransformation transformation;
+    transformation.setSize(640, 480);
+    input->transformation = transformation;
+    auto output = ImgDetectionConverter("frame", true).toRosMsgPtr(input);
+    EXPECT_DOUBLE_EQ(output->detections[0].bbox.size_x, 0.5);
+    EXPECT_DOUBLE_EQ(output->detections[0].bbox.center.position.x, 0.5);
+    EXPECT_EQ(output->detections[0].header, output->header);
+}
 }  // namespace depthai_bridge

@@ -34,6 +34,7 @@ void TrackDetectionConverter::toRosMsg(std::shared_ptr<dai::Tracklets> trackData
         float yCenter = yMin + ySize / 2;
 
         opDetectionMsg.detections[i].results.resize(1);
+        opDetectionMsg.detections[i].results[0].pose.pose.orientation.w = 1.0;
 
         opDetectionMsg.detections[i].results[0].hypothesis.class_id = std::to_string(t.label);
         opDetectionMsg.detections[i].results[0].hypothesis.score = thresh;

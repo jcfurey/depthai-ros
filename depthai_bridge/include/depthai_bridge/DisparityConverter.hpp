@@ -28,12 +28,15 @@ class DisparityConverter : public BaseConverter {
     void toRosMsg(std::shared_ptr<dai::ImgFrame> inData, std::deque<DisparityMsgs::DisparityImage>& outImageMsg);
     DisparityImagePtr toRosMsgPtr(std::shared_ptr<dai::ImgFrame> inData);
 
+    // Match StereoDepth subpixel configuration; default is five fractional bits.
+    void setSubpixelFractionalBits(unsigned int bits);
     float getFocalLength() const;
     float getBaseline() const;
     float getMinDepth() const;
     float getMaxDepth() const;
 
    private:
+    unsigned int subpixelFractionalBits = 5;
     const float focalLength = 882.2, baseline = 7.5, minDepth = 80, maxDepth;
 };
 

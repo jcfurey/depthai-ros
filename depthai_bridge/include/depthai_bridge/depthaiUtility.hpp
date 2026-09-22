@@ -94,14 +94,17 @@ inline rclcpp::Time getFrameTime(rclcpp::Time rclBaseTime,
     return rclStamp;
 }
 
-inline void updateBaseTime(std::chrono::time_point<std::chrono::steady_clock> steadyBaseTime, rclcpp::Time& rclBaseTime, int64_t& totalNsChange) {
-    rclcpp::Time currentRosTime = rclcpp::Clock().now();
+inline void updateBaseTime(std::chrono::time_point<std::chrono::steady_clock> steadyBaseTime,
+                           rclcpp::Time& rclBaseTime,
+                           int64_t& totalNsChange,
+                           const rclcpp::Clock::SharedPtr& clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME)) {
+    rclcpp::Time currentRosTime = clock->now();
     std::chrono::time_point<std::chrono::steady_clock> currentSteadyTime = std::chrono::steady_clock::now();
     // In nanoseconds
     auto expectedOffset = std::chrono::duration_cast<std::chrono::nanoseconds>(currentSteadyTime - steadyBaseTime).count();
-    uint64_t previousBaseTimeNs = rclBaseTime.nanoseconds();
-    rclBaseTime = rclcpp::Time(currentRosTime.nanoseconds() - expectedOffset);
-    uint64_t newBaseTimeNs = rclBaseTime.nanoseconds();
+    int64_t previousBaseTimeNs = rclBaseTime.nanoseconds();
+    rclBaseTime = rclcpp::Time(std::max<int64_t>(0, currentRosTime.nanoseconds() - expectedOffset), clock->get_clock_type());
+    int64_t newBaseTimeNs = rclBaseTime.nanoseconds();
     int64_t diff = static_cast<int64_t>(newBaseTimeNs - previousBaseTimeNs);
     totalNsChange += diff;
     if(::abs(diff) > ZERO_TIME_DELTA_NS) {

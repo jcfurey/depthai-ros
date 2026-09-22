@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "ament_index_cpp/get_package_share_directory.hpp"
+#include "depthai_bridge/Process.hpp"
 #include "depthai_bridge/depthaiUtility.hpp"
 #include "geometry_msgs/msg/quaternion.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
@@ -243,28 +244,31 @@ void TFPublisher::convertModelName() {
 }
 
 std::string TFPublisher::getURDF() {
-    std::string args, path;
+    const std::string path =
+        customURDFLocation.empty() ? ament_index_cpp::get_package_share_directory("depthai_descriptions") + "/urdf/base_descr.urdf.xacro" : customURDFLocation;
+    std::vector<std::string> arguments{"xacro", path};
     if(customXacroArgs.empty()) {
-        args = prepareXacroArgs();
+        // Preserve each parameter as one argv element, including embedded spaces.
+        if(customURDFLocation.empty() && !modelNameAvailable()) camModel = "OAK-D-S2";
+        for(const auto& value : std::vector<std::pair<std::string, std::string>>{{"camera_name", tfPrefix},
+                                                                                 {"camera_model", camModel},
+                                                                                 {"base_frame", baseFrame},
+                                                                                 {"parent_frame", parentFrame},
+                                                                                 {"cam_pos_x", camPosX},
+                                                                                 {"cam_pos_y", camPosY},
+                                                                                 {"cam_pos_z", camPosZ},
+                                                                                 {"cam_roll", camRoll},
+                                                                                 {"cam_pitch", camPitch},
+                                                                                 {"cam_yaw", camYaw},
+                                                                                 {"has_imu", imuFromDescr}}) {
+            arguments.push_back(value.first + ":=" + value.second);
+        }
     } else {
-        args = customXacroArgs;
+        const auto custom = splitArguments(customXacroArgs);
+        arguments.insert(arguments.end(), custom.begin(), custom.end());
     }
-    if(customURDFLocation.empty()) {
-        path = ament_index_cpp::get_package_share_directory("depthai_descriptions") + "/urdf/base_descr.urdf.xacro ";
-    } else {
-        path = customURDFLocation + " ";
-    }
-    std::string cmd = "xacro " + path + args;
-    RCLCPP_DEBUG(logger, "Xacro command: %s", cmd.c_str());
-    std::array<char, 128> buffer;
-    std::string result;
-    std::unique_ptr<FILE, int (*)(FILE*)> pipe(popen(cmd.c_str(), "r"), pclose);
-    if(!pipe) {
-        throw std::runtime_error("popen() failed!");
-    }
-    while(fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
-        result += buffer.data();
-    }
+    auto result = runProcess(arguments);
+    if(result.empty()) throw std::runtime_error("xacro returned an empty robot description");
     return result;
 }
 }  // namespace depthai_bridge

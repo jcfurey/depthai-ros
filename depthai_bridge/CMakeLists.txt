@@ -3,7 +3,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 project(
   depthai_bridge
-  VERSION 3.3.0
+  VERSION 3.4.0
   LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -33,6 +33,7 @@ set(dependencies
     camera_info_manager
     cv_bridge
     depthai_ros_msgs
+    depthai
     image_transport
     rclcpp
     nav_msgs
@@ -52,6 +53,7 @@ file(
   GLOB
   LIB_SRC
   "src/BaseConverter.cpp"
+  "src/Process.cpp"
   "src/DisparityConverter.cpp"
   "src/GridMapConverter.cpp"
   "src/ImageConverter.cpp"
@@ -66,6 +68,9 @@ file(
   "src/TrackSpatialDetectionConverter.cpp")
 
 add_library(${PROJECT_NAME} SHARED ${LIB_SRC})
+target_include_directories(${PROJECT_NAME} PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
 
 target_link_libraries(
   ${PROJECT_NAME}
@@ -119,6 +124,8 @@ if(BUILD_TESTING)
         target_link_libraries("${PROJECT_NAME}_${test_name}" ${PROJECT_NAME})
 
     endmacro()
+    bridge_test(process_test ProcessTest.cpp)
+    bridge_test(bridge_publisher_test BridgePublisherTest.cpp)
     bridge_test(disparity_converter_test DisparityConverterTest.cpp)
     bridge_test(depthai_utility_test DepthaiUtilityTest.cpp)
     bridge_test(image_converter_test ImageConverterTest.cpp)

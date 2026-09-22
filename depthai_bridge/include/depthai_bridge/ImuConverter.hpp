@@ -146,7 +146,7 @@ class ImuConverter : public BaseConverter {
 
         msg.header.frame_id = frameName;
 
-        msg.header.stamp = getFrameTime(rosBaseTime, steadyBaseTime, timestamp);
+        msg.header.stamp = toRosTime(timestamp);
     }
 
     template <typename I, typename S, typename T, typename M>
@@ -157,7 +157,7 @@ class ImuConverter : public BaseConverter {
 
         msg.header.frame_id = frameName;
 
-        msg.header.stamp = getFrameTime(rosBaseTime, steadyBaseTime, timestamp);
+        msg.header.stamp = toRosTime(timestamp);
     }
 
     template <typename I, typename S, typename M>
@@ -167,7 +167,7 @@ class ImuConverter : public BaseConverter {
 
         msg.header.frame_id = frameName;
 
-        msg.header.stamp = getFrameTime(rosBaseTime, steadyBaseTime, timestamp);
+        msg.header.stamp = toRosTime(timestamp);
     }
 
     template <typename I, typename S, typename M>

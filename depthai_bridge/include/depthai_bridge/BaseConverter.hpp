@@ -1,10 +1,13 @@
 #pragma once
 
 #include <chrono>
+#include <memory>
+#include <mutex>
 #include <string>
 
 #include "depthai/common/CameraExposureOffset.hpp"
 #include "depthai/pipeline/datatype/Buffer.hpp"
+#include "rclcpp/clock.hpp"
 #include "rclcpp/time.hpp"
 #include "std_msgs/msg/header.hpp"
 
@@ -22,6 +25,11 @@ class BaseConverter {
      *
      */
     void updateRosBaseTime();
+    // Set before callbacks start. Wall time preserves hardware capture age.
+    // Active simulated time stamps hardware data at the current /clock tick:
+    // steady hardware time cannot be extrapolated through paused/rate-changing simulation.
+    void setClock(rclcpp::Clock::SharedPtr clock);
+    rclcpp::Time toRosTime(std::chrono::steady_clock::time_point timestamp);
 
     /**
      * @brief Commands the converter to automatically update the ROS base time on message conversion based on variable
@@ -47,6 +55,8 @@ class BaseConverter {
 
    protected:
     const std::string frameName;
+    rclcpp::Clock::SharedPtr rosClock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
+    std::shared_ptr<std::mutex> clockMutex = std::make_shared<std::mutex>();
     std::chrono::time_point<std::chrono::steady_clock> steadyBaseTime;
     rclcpp::Time rosBaseTime;
     bool getBaseDeviceTimestamp;

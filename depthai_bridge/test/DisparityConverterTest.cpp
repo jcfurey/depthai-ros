@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <cstring>
+#include <cv_bridge/cv_bridge.hpp>
 #include <deque>
 #include <memory>
 
@@ -32,13 +34,13 @@ TEST(DisparityConverterTest, ToRosMsgTest) {
     EXPECT_EQ(outDispImageMsg.f, 1.0f);
     EXPECT_EQ(outDispImageMsg.min_disparity, 0.1f);
     EXPECT_EQ(outDispImageMsg.max_disparity, 10.0f);
-    EXPECT_EQ(outDispImageMsg.t, 0.01f);
+    EXPECT_EQ(outDispImageMsg.t, 1.0f);
     EXPECT_EQ(outDispImageMsg.image.encoding, sensor_msgs::image_encodings::TYPE_32FC1);
     EXPECT_EQ(outDispImageMsg.image.height, 2);
     EXPECT_EQ(outDispImageMsg.image.width, 2);
     EXPECT_EQ(outDispImageMsg.image.step, 8);
-    EXPECT_EQ(outDispImageMsg.image.is_bigendian, true);
-    EXPECT_EQ(outDispImageMsg.image.data.size(), 4);
+    EXPECT_FLOAT_EQ(cv_bridge::toCvCopy(outDispImageMsg.image)->image.at<float>(1, 1), 4.0f);
+    EXPECT_EQ(outDispImageMsg.image.data.size(), 16);
 }
 
 TEST(DisparityConverterTest, ToRosMsgPtrTest) {
@@ -55,13 +57,32 @@ TEST(DisparityConverterTest, ToRosMsgPtrTest) {
     EXPECT_EQ(outDispImagePtr->f, 1.0f);
     EXPECT_EQ(outDispImagePtr->min_disparity, 0.1f);
     EXPECT_EQ(outDispImagePtr->max_disparity, 10.0f);
-    EXPECT_EQ(outDispImagePtr->t, 0.01f);
+    EXPECT_EQ(outDispImagePtr->t, 1.0f);
     EXPECT_EQ(outDispImagePtr->image.encoding, sensor_msgs::image_encodings::TYPE_32FC1);
     EXPECT_EQ(outDispImagePtr->image.height, 2);
     EXPECT_EQ(outDispImagePtr->image.width, 2);
     EXPECT_EQ(outDispImagePtr->image.step, 8);
-    EXPECT_EQ(outDispImagePtr->image.is_bigendian, true);
-    EXPECT_EQ(outDispImagePtr->image.data.size(), 4);
+    EXPECT_FLOAT_EQ(cv_bridge::toCvCopy(outDispImagePtr->image)->image.at<float>(0, 0), 1.0f);
+    EXPECT_EQ(outDispImagePtr->image.data.size(), 16);
 }
 
+TEST(DisparityConverterTest, SubpixelAndMalformedInput) {
+    DisparityConverter converter("frame", 100, 10, 10, 1000);
+    auto input = std::make_shared<dai::ImgFrame>();
+    input->setType(dai::ImgFrame::Type::RAW16);
+    input->setSize(2, 1);
+    input->setData({48, 0, 0, 1});
+    auto output = converter.toRosMsgPtr(input);
+    auto image = cv_bridge::toCvCopy(output->image)->image;
+    EXPECT_FLOAT_EQ(image.at<float>(0, 0), 1.5f);
+    EXPECT_FLOAT_EQ(image.at<float>(0, 1), 8.0f);
+    EXPECT_FLOAT_EQ(output->f * output->t / image.at<float>(0, 1), 1.25f);
+    converter.setSubpixelFractionalBits(3);
+    EXPECT_FLOAT_EQ(converter.toRosMsgPtr(input)->delta_d, 0.125f);
+    EXPECT_THROW(converter.setSubpixelFractionalBits(0), std::invalid_argument);
+    input->setData({1});
+    EXPECT_THROW(converter.toRosMsgPtr(input), std::invalid_argument);
+    input->setSize(0, 0);
+    EXPECT_THROW(converter.toRosMsgPtr(input), std::invalid_argument);
+}
 }  // namespace depthai_bridge
