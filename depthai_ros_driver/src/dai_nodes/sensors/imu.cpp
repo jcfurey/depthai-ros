@@ -34,9 +34,13 @@ void Imu::setNames() {
 
 void Imu::setInOut(std::shared_ptr<dai::Pipeline> /* pipeline */) {}
 
-void Imu::setupQueues(std::shared_ptr<dai::Device> /* device */) {
+void Imu::setupQueues(std::shared_ptr<dai::Device> device) {
     imuQ = imuNode->out.createOutputQueue(ph->getParam<int>("i_max_q_size"), false);
     auto imuMode = ph->getSyncMethod();
+    if(device->getPlatform() == dai::Platform::RVC4 &&
+       imuMode != depthai_bridge::ImuSyncMethod::COPY) {
+        RCLCPP_WARN(getLogger(), "For RVC4 devices we currently support COPY method");
+    }
     rclcpp::PublisherOptions options;
     options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
     param_handlers::imu::ImuMsgType msgType = ph->getMsgType();
