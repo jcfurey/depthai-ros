@@ -33,6 +33,15 @@ class DriverTestAccess {
     static uint64_t restarts(Driver& driver) {
         return driver.restartCount;
     }
+    static bool dirty(Driver& driver) {
+        return driver.configurationDirty;
+    }
+    static void clearDirty(Driver& driver) {
+        driver.configurationDirty = false;
+    }
+    static param_handlers::DriverParamHandler& handler(Driver& driver) {
+        return *driver.ph;
+    }
     static size_t pending(Driver& driver) {
         std::lock_guard<std::mutex> lock(driver.pendingParamsMtx);
         return driver.pendingParams.size();
@@ -251,6 +260,21 @@ TEST_F(DriverLifecycleTest, OnlyCommittedRuntimeUpdatesAreQueued) {
     EXPECT_TRUE(driver->set_parameter(rclcpp::Parameter("driver.r_laser_dot_intensity", 0.4)).successful);
     EXPECT_EQ(DriverTestAccess::pending(*driver), 2u);
     DriverTestAccess::running(*driver, false);
+}
+
+TEST_F(DriverLifecycleTest, InactiveRuntimeUpdateRebuildsOnActivation) {
+    // A configured-but-inactive pipeline captured r_* values as initial controls.
+    DriverTestAccess::running(*driver, false);
+    DriverTestAccess::clearDirty(*driver);
+    EXPECT_TRUE(driver->set_parameter(rclcpp::Parameter("driver.r_laser_dot_intensity", 0.2)).successful);
+    EXPECT_TRUE(DriverTestAccess::dirty(*driver));
+    EXPECT_EQ(DriverTestAccess::pending(*driver), 0u);
+}
+
+TEST_F(DriverLifecycleTest, UndeclaredParameterReadFailsClearly) {
+    auto& handler = DriverTestAccess::handler(*driver);
+    EXPECT_THROW(handler.getParam<int>("i_not_declared"), std::invalid_argument);
+    EXPECT_NO_THROW(handler.getParam<int>("i_connection_timeout"));
 }
 
 }  // namespace depthai_ros_driver

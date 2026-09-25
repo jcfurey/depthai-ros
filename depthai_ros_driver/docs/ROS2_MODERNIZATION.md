@@ -119,6 +119,34 @@ hardware batch was rolled back.
   Feeding a ROS bag into the device stereo pipeline remains unsupported and is
   rejected explicitly.
 
+## Follow-up correctness fixes (2026-09-25)
+
+* `sensor_msgs/Imu` always sets `orientation_covariance[0] = -1` when no orientation
+  is available (rotation vector disabled, or not yet received). Interpolated IMU
+  modes pair rotation and magnetometer reports by timestamp (latest at or before
+  each sample) instead of by queue position.
+* Organized `PointCloud2` output marks zero-depth points as NaN and sets
+  `is_dense` accordingly (REP-117). Sparse clouds are published as `N x 1`.
+* Low-bandwidth decode publishes `bgr8` for colour sources (including RGB888i),
+  `mono8` for GRAY8/RAW8 and `16UC1` millimetres for disparity-to-depth.
+  Out-of-range depth is 0 (no measurement). Unsupported frame types raise an
+  error instead of publishing an empty image; conversion errors are logged
+  (throttled) rather than propagating into SDK queue threads.
+* Unaligned StereoDepth output (`stereo.i_aligned: false`) is aligned to the
+  rectified right camera and stamped with that camera's optical frame and
+  calibration.
+* `camera_info` rescales the stereo translation `P[3]` to the published frame's
+  focal length, and rectified streams use the stereo input size.
+* `driver.i_external_calibration_path` now reaches TF, `camera_info` and
+  `~/save_calibration` (the device's runtime calibration), not only the pipeline.
+* Runtime (`r_*`) changes made while configured but inactive trigger a pipeline
+  rebuild on activation instead of being dropped.
+* Reading an undeclared parameter fails configuration with the parameter name.
+  `i_max_q_size` accepts 1-1000 and `i_decimation_filter_decimation_factor` 1-4.
+* Queue callbacks are detached before their queues close on every node.
+* A camera's default output is created on demand for internal consumers (RGBD
+  alignment, ToF, feature tracking) even when the camera topic is not published.
+
 ## Transport, filters and namespaces
 
 BridgePublisher uses reliable, volatile KeepLast(1) by default for live streams,

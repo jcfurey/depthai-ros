@@ -6,6 +6,7 @@
 #include "depthai_ros_driver/dai_nodes/sensors/img_pub.hpp"
 #include "depthai_ros_driver/dai_nodes/sensors/sensor_helpers.hpp"
 #include "depthai_ros_driver/param_handlers/sync_param_handler.hpp"
+#include "rclcpp/logging.hpp"
 
 namespace depthai_ros_driver {
 namespace dai_nodes {
@@ -43,7 +44,12 @@ void Sync::setupQueues(std::shared_ptr<dai::Device> /* device */) {
                             firstMsg = false;
                         }
                         if(pub->shouldPublish()) {
-                            pub->publish(pub->convertData(msg.second), timestamp);
+                            // Runs on the SDK queue thread, which does not handle callback exceptions.
+                            try {
+                                pub->publish(pub->convertData(msg.second), timestamp);
+                            } catch(const std::exception& e) {
+                                RCLCPP_ERROR_THROTTLE(getLogger(), *getROSNode()->get_clock(), 5000, "Failed to publish %s: %s", msg.first.c_str(), e.what());
+                            }
                         }
                     }
                 }

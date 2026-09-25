@@ -25,7 +25,7 @@ void ThermalParamHandler::declareParams(std::shared_ptr<dai::node::Thermal> ther
     declareAndLogParam<int>(ParamNames::HEIGHT, 192);
     declareAndLogParam<bool>(ParamNames::PUBLISH_TOPIC, true);
     declareAndLogParam<bool>(ParamNames::ENABLE_NN, false);
-    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 8);
+    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 8, getRangedIntDescriptor(1, 1000));
     declareAndLogParam<bool>(ParamNames::LOW_BANDWIDTH, false);
     declareAndLogParam<int>(ParamNames::LOW_BANDWIDTH_PROFILE, 4);
     declareAndLogParam<int>(ParamNames::LOW_BANDWIDTH_FRAME_FREQ, 30);

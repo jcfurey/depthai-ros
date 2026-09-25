@@ -11,6 +11,7 @@
 namespace dai {
 class Pipeline;
 class Device;
+class MessageQueue;
 namespace node {
 class VideoEncoder;
 }  // namespace node
@@ -98,6 +99,11 @@ class BaseNode {
     std::string getDeviceName();
     bool rsCompatibilityMode();
     rclcpp::Logger getLogger();
+    /**
+     * @brief      Detaches a queue callback, waiting for any in-flight invocation, then closes the queue.
+     *             Closing alone does not wait for callbacks running on SDK threads. Safe to call repeatedly.
+     */
+    static void closeQueue(const std::shared_ptr<dai::MessageQueue>& queue, int& callbackId);
 
    private:
     std::string getFramePrefix();

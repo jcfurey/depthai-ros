@@ -71,6 +71,7 @@ class Segmentation : public BaseNode {
     std::shared_ptr<dai::node::ImageManip> imageManip;
     std::unique_ptr<param_handlers::NNParamHandler> ph;
     std::shared_ptr<dai::MessageQueue> nnQ, ptQ;
+    int nnQCBID = -1, ptQCBID = -1;
     std::string nnQName, ptQName;
 };
 

@@ -27,7 +27,7 @@ void SensorParamHandler::declareCommonParams(dai::CameraBoardSocket socket) {
     socketID = static_cast<dai::CameraBoardSocket>(declareAndLogParam<int>(ParamNames::BOARD_SOCKET_ID, static_cast<int>(socket)));
     declareAndLogParam<bool>(ParamNames::ENABLE_FEATURE_TRACKER, false);
     declareAndLogParam<bool>(ParamNames::ENABLE_NN, false);
-    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 8);
+    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 8, getRangedIntDescriptor(1, 1000));
     declareAndLogParam<bool>(ParamNames::LOW_BANDWIDTH, false);
     declareAndLogParam<int>(ParamNames::LOW_BANDWIDTH_PROFILE, 4);
     declareAndLogParam<int>(ParamNames::LOW_BANDWIDTH_FRAME_FREQ, 30);

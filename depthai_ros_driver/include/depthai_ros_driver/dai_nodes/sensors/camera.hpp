@@ -54,6 +54,7 @@ class Camera : public BaseNode {
     int getHeight();
 
    private:
+    void requestDefaultOutput();
     std::shared_ptr<sensor_helpers::ImagePublisher> rgbPub, previewPub;
     std::vector<std::string> outputNames;
     std::vector<std::pair<std::string, dai::Node::Output*>> outputs;
@@ -62,7 +63,7 @@ class Camera : public BaseNode {
     std::unique_ptr<param_handlers::SensorParamHandler> ph;
     std::shared_ptr<dai::InputQueue> controlQ;
     std::string ispQName, previewQName, controlQName;
-    dai::Node::Output* defaultOut;
+    dai::Node::Output* defaultOut = nullptr;
 };
 
 }  // namespace dai_nodes

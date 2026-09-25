@@ -99,7 +99,7 @@ void Slam::setupQueues(std::shared_ptr<dai::Device> /* device */) {
         mapToOdomConv->setClock(getROSNode()->get_clock());
         mapToOdomConv->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG));
         mapToOdomConv->fixQuaternion();
-        mapToOdomQ->addCallback(std::bind(&Slam::mapToOdomCB, this, std::placeholders::_1, std::placeholders::_2));
+        mapToOdomQCBID = mapToOdomQ->addCallback(std::bind(&Slam::mapToOdomCB, this, std::placeholders::_1, std::placeholders::_2));
     }
     if(ph->getParam<bool>("i_publish_absolute_pose")) {
         absolutePoseQ = slamNode->transform.createOutputQueue(ph->getParam<int>(ParamNames::MAX_Q_SIZE), false);
@@ -109,7 +109,7 @@ void Slam::setupQueues(std::shared_ptr<dai::Device> /* device */) {
             std::make_unique<depthai_bridge::TransformDataConverter>(mapFrame, baseFrame, ph->getParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP));
         absolutePoseConv->setClock(getROSNode()->get_clock());
         absolutePoseConv->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG));
-        absolutePoseQ->addCallback(std::bind(&Slam::absolutePoseCB, this, std::placeholders::_1, std::placeholders::_2));
+        absolutePoseQCBID = absolutePoseQ->addCallback(std::bind(&Slam::absolutePoseCB, this, std::placeholders::_1, std::placeholders::_2));
     }
     if(ph->getParam<bool>("i_publish_map")) {
         mapQ = slamNode->occupancyGridMap.createOutputQueue(ph->getParam<int>(ParamNames::MAX_Q_SIZE), false);
@@ -117,7 +117,7 @@ void Slam::setupQueues(std::shared_ptr<dai::Device> /* device */) {
         mapConv->setClock(getROSNode()->get_clock());
         mapConv->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG));
         mapPub = getROSNode()->create_publisher<nav_msgs::msg::OccupancyGrid>("~/" + getName() + "/map", ph->getParam<int>(ParamNames::MAX_Q_SIZE), options);
-        mapQ->addCallback(std::bind(&Slam::mapCB, this, std::placeholders::_1, std::placeholders::_2));
+        mapQCBID = mapQ->addCallback(std::bind(&Slam::mapCB, this, std::placeholders::_1, std::placeholders::_2));
     }
     if(ph->getParam<bool>("i_publish_ground_pcl")) {
         groundPclQ = slamNode->groundPCL.createOutputQueue(ph->getParam<int>(ParamNames::MAX_Q_SIZE), false);
@@ -126,7 +126,7 @@ void Slam::setupQueues(std::shared_ptr<dai::Device> /* device */) {
         groundPclConv->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG));
         groundPclPub =
             getROSNode()->create_publisher<sensor_msgs::msg::PointCloud2>("~/" + getName() + "/ground_pcl", ph->getParam<int>(ParamNames::MAX_Q_SIZE), options);
-        groundPclQ->addCallback(std::bind(&Slam::groundPclCB, this, std::placeholders::_1, std::placeholders::_2));
+        groundPclQCBID = groundPclQ->addCallback(std::bind(&Slam::groundPclCB, this, std::placeholders::_1, std::placeholders::_2));
     }
     if(ph->getParam<bool>("i_publish_obstacle_pcl")) {
         obstaclePclQ = slamNode->obstaclePCL.createOutputQueue(ph->getParam<int>(ParamNames::MAX_Q_SIZE), false);
@@ -135,26 +135,16 @@ void Slam::setupQueues(std::shared_ptr<dai::Device> /* device */) {
         obstaclePclConv->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG));
         obstaclePclPub = getROSNode()->create_publisher<sensor_msgs::msg::PointCloud2>(
             "~/" + getName() + "/obstacle_pcl", ph->getParam<int>(ParamNames::MAX_Q_SIZE), options);
-        obstaclePclQ->addCallback(std::bind(&Slam::obstaclePclCB, this, std::placeholders::_1, std::placeholders::_2));
+        obstaclePclQCBID = obstaclePclQ->addCallback(std::bind(&Slam::obstaclePclCB, this, std::placeholders::_1, std::placeholders::_2));
     }
 }
 
 void Slam::closeQueues() {
-    if(ph->getParam<bool>("i_publish_tf")) {
-        mapToOdomQ->close();
-    }
-    if(ph->getParam<bool>("i_publish_absolute_pose")) {
-        absolutePoseQ->close();
-    }
-    if(ph->getParam<bool>("i_publish_map")) {
-        mapQ->close();
-    }
-    if(ph->getParam<bool>("i_publish_ground_pcl")) {
-        groundPclQ->close();
-    }
-    if(ph->getParam<bool>("i_publish_obstacle_pcl")) {
-        obstaclePclQ->close();
-    }
+    closeQueue(mapToOdomQ, mapToOdomQCBID);
+    closeQueue(absolutePoseQ, absolutePoseQCBID);
+    closeQueue(mapQ, mapQCBID);
+    closeQueue(groundPclQ, groundPclQCBID);
+    closeQueue(obstaclePclQ, obstaclePclQCBID);
 }
 
 void Slam::mapToOdomCB(const std::string& /*name*/, const std::shared_ptr<dai::ADatatype>& data) {

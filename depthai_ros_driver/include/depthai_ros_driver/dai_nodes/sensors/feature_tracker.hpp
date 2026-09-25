@@ -51,6 +51,7 @@ class FeatureTracker : public BaseNode {
     std::shared_ptr<dai::node::FeatureTracker> featureNode;
     std::unique_ptr<param_handlers::FeatureTrackerParamHandler> ph;
     std::shared_ptr<dai::MessageQueue> featureQ;
+    int featureQCBID = -1;
     std::string featureQName;
     std::string parentName;
 };

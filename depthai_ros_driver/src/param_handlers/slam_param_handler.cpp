@@ -14,7 +14,7 @@ SlamParamHandler::SlamParamHandler(std::shared_ptr<rclcpp::Node> node, const std
 SlamParamHandler::~SlamParamHandler() = default;
 void SlamParamHandler::declareParams(std::shared_ptr<dai::node::RTABMapSLAM> slam) {
     declareAndLogParam<bool>(ParamNames::PUBLISH_TOPIC, true);
-    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 2);
+    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 2, getRangedIntDescriptor(1, 1000));
     declareAndLogParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP, false);
     declareAndLogParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG, false);
     declareAndLogParam<float>("i_frequency", 1.0);

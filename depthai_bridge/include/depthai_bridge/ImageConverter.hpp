@@ -132,6 +132,7 @@ class ImageConverter : public BaseConverter {
     }
 
    private:
+    void setProjectionTranslation(sensor_msgs::msg::CameraInfo& cameraInfo) const;
     static std::unordered_map<dai::ImgFrame::Type, std::string> encodingEnumMap;
     static std::unordered_map<dai::ImgFrame::Type, std::string> planarEncodingEnumMap;
 

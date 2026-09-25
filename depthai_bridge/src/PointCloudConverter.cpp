@@ -1,5 +1,9 @@
 #include "depthai_bridge/PointCloudConverter.hpp"
 
+#include <cstring>
+#include <limits>
+#include <stdexcept>
+
 #include "sensor_msgs/msg/point_field.hpp"
 
 namespace depthai_bridge {
@@ -41,9 +45,6 @@ void PointCloudConverter::toRosMsg(std::shared_ptr<dai::PointCloudData> inPcl, s
     unsigned int width = inPcl->getWidth();
     unsigned int height = inPcl->getHeight();
     msg.header = getRosHeader(inPcl);
-    msg.width = width;
-    msg.height = height;
-    msg.is_dense = inPcl->isOrganized();
 
     msg.fields.clear();
     sensor_msgs::msg::PointField field_x;
@@ -78,32 +79,56 @@ void PointCloudConverter::toRosMsg(std::shared_ptr<dai::PointCloudData> inPcl, s
         pointStep += 4;
     }
     msg.point_step = pointStep;
+
+    // Read the SDK buffer in place; getPoints()/getPointsRGB() return full copies.
+    auto data = inPcl->getData();
+    const size_t numPoints = data.size() / (isColored ? sizeof(dai::Point3fRGBA) : sizeof(dai::Point3f));
+    const bool organized = inPcl->isOrganized();
+    if(organized) {
+        if(numPoints != static_cast<size_t>(width) * height) {
+            throw std::runtime_error("Organized point cloud size does not match its width and height");
+        }
+        msg.width = width;
+        msg.height = height;
+    } else {
+        // Sparse clouds contain only valid points; their width/height describe the source frame.
+        msg.width = static_cast<uint32_t>(numPoints);
+        msg.height = 1;
+    }
     msg.row_step = msg.point_step * msg.width;
-    msg.data.resize(msg.row_step * msg.height);
+    msg.data.resize(static_cast<size_t>(msg.row_step) * msg.height);
+
+    // REP-117: organized clouds keep invalid (zero-depth) points as NaN and are not dense.
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    bool dense = true;
+    auto writeXYZ = [&](float* ptr, float x, float y, float z) {
+        if(organized && z == 0.0f) {
+            ptr[0] = ptr[1] = ptr[2] = nan;
+            dense = false;
+        } else {
+            ptr[0] = x * scaleFactor;
+            ptr[1] = y * scaleFactor;
+            ptr[2] = z * scaleFactor;
+        }
+    };
 
     if(isColored) {
-        auto points = inPcl->getPointsRGB();
-        for(size_t i = 0; i < points.size(); ++i) {
+        const auto* points = reinterpret_cast<const dai::Point3fRGBA*>(data.data());
+        for(size_t i = 0; i < numPoints; ++i) {
             float* ptr = reinterpret_cast<float*>(&msg.data[i * pointStep]);
             const auto& pt = points[i];
-            ptr[0] = pt.x * scaleFactor;
-            ptr[1] = pt.y * scaleFactor;
-            ptr[2] = pt.z * scaleFactor;
+            writeXYZ(ptr, pt.x, pt.y, pt.z);
             uint32_t rgb = (pt.r << 16) | (pt.g << 8) | pt.b;
-            float rgb_float;
-            std::memcpy(&rgb_float, &rgb, sizeof(float));
-            ptr[3] = rgb_float;
+            std::memcpy(&ptr[3], &rgb, sizeof(float));
         }
     } else {
-        auto points = inPcl->getPoints();
-        for(size_t i = 0; i < points.size(); ++i) {
-            float* ptr = reinterpret_cast<float*>(&msg.data[i * pointStep]);
+        const auto* points = reinterpret_cast<const dai::Point3f*>(data.data());
+        for(size_t i = 0; i < numPoints; ++i) {
             const auto& pt = points[i];
-            ptr[0] = pt.x * scaleFactor;
-            ptr[1] = pt.y * scaleFactor;
-            ptr[2] = pt.z * scaleFactor;
+            writeXYZ(reinterpret_cast<float*>(&msg.data[i * pointStep]), pt.x, pt.y, pt.z);
         }
     }
+    msg.is_dense = dense;
 
     pclMsgs.push_back(std::move(msg));
 }

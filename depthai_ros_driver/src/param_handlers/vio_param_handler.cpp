@@ -14,7 +14,7 @@ VioParamHandler::VioParamHandler(std::shared_ptr<rclcpp::Node> node, const std::
 VioParamHandler::~VioParamHandler() = default;
 void VioParamHandler::declareParams(std::shared_ptr<dai::node::BasaltVIO> vio) {
     declareAndLogParam<bool>(ParamNames::PUBLISH_TOPIC, true);
-    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 2);
+    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 2, getRangedIntDescriptor(1, 1000));
     declareAndLogParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP, false);
     declareAndLogParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG, false);
     declareAndLogParam<int>(ParamNames::BOARD_SOCKET_ID, static_cast<int>(dai::CameraBoardSocket::CAM_B));

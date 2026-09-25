@@ -10,6 +10,7 @@
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
+#include "opencv2/imgcodecs.hpp"
 
 namespace depthai_bridge {
 
@@ -188,6 +189,91 @@ TEST_F(ImageConverterTest, ToDaiMsgTest) {
     EXPECT_EQ(outData.getHeight(), 480);
     EXPECT_EQ(outData.getType(), dai::ImgFrame::Type::BGR888i);
     EXPECT_EQ(outData.getData().size(), 640 * 480 * 3);
+}
+
+namespace {
+std::shared_ptr<dai::EncodedFrame> encodedFrame(const cv::Mat& image) {
+    std::vector<uint8_t> bytes;
+    // PNG keeps the synthetic pixels exact while exercising the same imdecode path as MJPEG.
+    EXPECT_TRUE(cv::imencode(".png", image, bytes));
+    auto frame = std::make_shared<dai::EncodedFrame>();
+    frame->setWidth(image.cols);
+    frame->setHeight(image.rows);
+    frame->setData(bytes);
+    return frame;
+}
+}  // namespace
+
+TEST_F(ImageConverterTest, BitstreamColorDecodesAsBgr8) {
+    for(auto type : {dai::ImgFrame::Type::BGR888i, dai::ImgFrame::Type::RGB888i, dai::ImgFrame::Type::NV12}) {
+        ImageConverter converter("test_frame", true, false);
+        converter.convertFromBitstream(type);
+        auto msg = converter.toRosMsgRawPtr(encodedFrame(cv::Mat(4, 6, CV_8UC3, cv::Scalar(10, 20, 30))));
+        EXPECT_EQ(msg.encoding, "bgr8");
+        EXPECT_EQ(msg.width, 6u);
+        EXPECT_EQ(msg.height, 4u);
+        ASSERT_EQ(msg.data.size(), 6u * 4u * 3u);
+        EXPECT_EQ(msg.data[0], 10);
+        EXPECT_EQ(msg.data[2], 30);
+    }
+}
+
+TEST_F(ImageConverterTest, BitstreamRaw8DecodesAsMono8) {
+    ImageConverter converter("test_frame", true, false);
+    converter.convertFromBitstream(dai::ImgFrame::Type::RAW8);
+    auto msg = converter.toRosMsgRawPtr(encodedFrame(cv::Mat(4, 6, CV_8UC1, cv::Scalar(42))));
+    EXPECT_EQ(msg.encoding, "mono8");
+    EXPECT_EQ(msg.step, 6u);
+    ASSERT_EQ(msg.data.size(), 24u);
+    EXPECT_EQ(msg.data[5], 42);
+}
+
+TEST_F(ImageConverterTest, BitstreamDisparityConvertsToMillimetreDepth) {
+    ImageConverter converter("test_frame", true, false);
+    converter.convertFromBitstream(dai::ImgFrame::Type::RAW8);
+    converter.convertDispToDepth(7.5);  // cm
+    cv::Mat disparity(1, 3, CV_8UC1);
+    disparity.at<uint8_t>(0, 0) = 0;
+    disparity.at<uint8_t>(0, 1) = 50;
+    disparity.at<uint8_t>(0, 2) = 1;
+    sensor_msgs::msg::CameraInfo info;
+    info.p[0] = 1000.0;
+    auto msg = converter.toRosMsgRawPtr(encodedFrame(disparity), info);
+    EXPECT_EQ(msg.encoding, "16UC1");
+    ASSERT_EQ(msg.data.size(), 6u);
+    const auto* depth = reinterpret_cast<const uint16_t*>(msg.data.data());
+    EXPECT_EQ(depth[0], 0);     // no disparity
+    EXPECT_EQ(depth[1], 1500);  // 75 mm * 1000 px / 50 px
+    EXPECT_EQ(depth[2], 0);     // 75000 mm does not fit in 16 bits
+}
+
+TEST_F(ImageConverterTest, UnsupportedImgFrameTypeThrows) {
+    ImageConverter converter("test_frame", true, false);
+    auto inData = std::make_shared<dai::ImgFrame>();
+    inData->setWidth(4);
+    inData->setHeight(4);
+    inData->setType(dai::ImgFrame::Type::RAW10);
+    inData->setData(std::vector<uint8_t>(32, 0));
+    EXPECT_THROW(converter.toRosMsgRawPtr(inData), std::runtime_error);
+}
+
+TEST_F(ImageConverterTest, ToDaiMsgPlanarSplitsChannels) {
+    ImageConverter converter("test_frame", false, false);
+    sensor_msgs::msg::Image inMsg;
+    inMsg.width = 2;
+    inMsg.height = 1;
+    inMsg.encoding = "bgr8";
+    inMsg.step = 6;
+    inMsg.data = {1, 2, 3, 4, 5, 6};
+    dai::ImgFrame outData;
+    converter.toDaiMsg(inMsg, outData);
+    EXPECT_EQ(outData.getType(), dai::ImgFrame::Type::BGR888p);
+    const std::vector<uint8_t> expected = {1, 4, 2, 5, 3, 6};
+    ASSERT_EQ(outData.getData().size(), expected.size());
+    EXPECT_TRUE(std::equal(expected.begin(), expected.end(), outData.getData().begin()));
+
+    inMsg.encoding = "mono8";
+    EXPECT_THROW(converter.toDaiMsg(inMsg, outData), std::runtime_error);
 }
 
 TEST_F(ImageConverterTest, RosMsgtoCvMatTest) {

@@ -19,7 +19,7 @@ NNParamHandler::NNParamHandler(
         {"detection", nn::NNFamily::Detection},
     };
     declareAndLogParam<int>(ParamNames::BOARD_SOCKET_ID, static_cast<int>(socket));
-    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 8);
+    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 8, getRangedIntDescriptor(1, 1000));
 }
 NNParamHandler::~NNParamHandler() = default;
 nn::NNFamily NNParamHandler::getNNFamily() {

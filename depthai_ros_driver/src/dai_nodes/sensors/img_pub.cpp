@@ -80,7 +80,7 @@ void ImagePublisher::createImageConverter(std::shared_ptr<dai::Device> device) {
         converter->convertFromBitstream(convConfig.encoding);
         if(convConfig.isStereo && !convConfig.outputDisparity) {
             try {
-                auto calHandler = device->readCalibration();
+                auto calHandler = device->getCalibration();
                 double baseline = calHandler.getBaselineDistance(pubConfig.leftSocket, pubConfig.rightSocket, false);
                 if(convConfig.reverseSocketOrder) {
                     baseline = calHandler.getBaselineDistance(pubConfig.rightSocket, pubConfig.leftSocket, false);
@@ -101,7 +101,7 @@ void ImagePublisher::createImageConverter(std::shared_ptr<dai::Device> device) {
         converter->setAlphaScaling(convConfig.alphaScaling);
     }
     if(convConfig.isStereo && !convConfig.outputDisparity) {
-        auto calHandler = device->readCalibration();
+        auto calHandler = device->getCalibration();
         double baseline = calHandler.getBaselineDistance(pubConfig.leftSocket, pubConfig.rightSocket, false);
         if(convConfig.reverseSocketOrder) {
             baseline = calHandler.getBaselineDistance(pubConfig.rightSocket, pubConfig.leftSocket, false);
@@ -126,7 +126,7 @@ void ImagePublisher::createInfoManager(std::shared_ptr<dai::Device> device) {
     infoManager = std::make_shared<camera_info_manager::CameraInfoManager>(
         node->create_sub_node(std::string(node->get_name()) + "/" + pubConfig.daiNodeName).get(), "/" + pubConfig.daiNodeName + pubConfig.infoMgrSuffix);
     if(pubConfig.calibrationFile.empty()) {
-        auto calHandler = device->readCalibration();
+        auto calHandler = device->getCalibration();
         auto info = sensor_helpers::getCalibInfo(node->get_logger(), converter, calHandler, pubConfig.socket, pubConfig.width, pubConfig.height);
         if(pubConfig.rectified) {
             std::fill(info.d.begin(), info.d.end(), 0.0);
@@ -272,8 +272,13 @@ void ImagePublisher::publish(std::shared_ptr<Image> img, rclcpp::Time timestamp)
 
 void ImagePublisher::publish(const std::shared_ptr<dai::ADatatype>& data) {
     if(rclcpp::ok() && shouldPublish()) {
-        auto img = convertData(data);
-        publish(img);
+        // Runs on the SDK queue thread, which does not handle callback exceptions.
+        try {
+            auto img = convertData(data);
+            publish(img);
+        } catch(const std::exception& e) {
+            RCLCPP_ERROR_THROTTLE(node->get_logger(), *node->get_clock(), 5000, "Failed to publish %s: %s", qName.c_str(), e.what());
+        }
     }
 }
 

@@ -88,6 +88,10 @@ Stereo::Stereo(const std::string& daiNodeName,
     }
 
     aligned = ph->getParam<bool>(param_handlers::ParamNames::ALIGNED);
+    if(!aligned && stereoCamNode) {
+        // Pin the unaligned output to a known rectified camera so frame_id and camera_info match it.
+        stereoCamNode->setDepthAlign(dai::StereoDepthConfig::AlgorithmControl::DepthAlign::RECTIFIED_RIGHT);
+    }
     if(ph->getParam<bool>("i_enable_left_spatial_nn")) {
         nnNodeLeft = std::make_unique<SpatialNNWrapper>(
             getName() + "_" + left->getName() + "_spatial_nn", getROSNode(), pipeline, device->getDeviceName(), rsCompat, *left, *this);
@@ -264,8 +268,9 @@ void Stereo::setupRectQueue(std::shared_ptr<dai::Device> device,
     pubConfig.daiNodeName = sensorName;
     pubConfig.rectified = true;
     pubConfig.undistorted = true;
-    pubConfig.width = ph->getOtherNodeParam<int>(sensorName, "i_width");
-    pubConfig.height = ph->getOtherNodeParam<int>(sensorName, "i_height");
+    // Rectified frames are produced at the stereo input size, not the sensor's own output size.
+    pubConfig.width = stereoCamNode ? ph->getParam<int>(param_handlers::ParamNames::WIDTH) : ph->getOtherNodeParam<int>(sensorName, "i_width");
+    pubConfig.height = stereoCamNode ? ph->getParam<int>(param_handlers::ParamNames::HEIGHT) : ph->getOtherNodeParam<int>(sensorName, "i_height");
     pubConfig.topicName = "~/" + sensorName;
     pubConfig.topicSuffix = rsCompatibilityMode() ? "/image_rect_raw" : "/image_rect";
     pubConfig.maxQSize = ph->getOtherNodeParam<int>(sensorName, "i_max_q_size");
@@ -286,8 +291,11 @@ void Stereo::setupRightRectQueue(std::shared_ptr<dai::Device> device) {
 
 void Stereo::setupStereoQueue(std::shared_ptr<dai::Device> device) {
     using param_handlers::ParamNames;
-    std::string tfPrefix;
-    tfPrefix = getOpticalFrameName(ph->getParam<std::string>("i_socket_name"));
+    // Unaligned StereoDepth output is in the rectified right camera's view (see constructor).
+    const bool alignedToRight = !aligned && stereoCamNode;
+    const auto depthSocket = alignedToRight ? rightSensInfo.socket : ph->getSocketID();
+    const std::string tfPrefix =
+        getOpticalFrameName(alignedToRight ? getSocketName(rightSensInfo.socket) : ph->getParam<std::string>("i_socket_name"));
     utils::ImgConverterConfig convConfig;
     convConfig.getBaseDeviceTimestamp = ph->getParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP);
     convConfig.tfPrefix = tfPrefix;
@@ -312,7 +320,7 @@ void Stereo::setupStereoQueue(std::shared_ptr<dai::Device> device) {
     pubConf.undistorted = !convConfig.alphaScalingEnabled;
     pubConf.width = ph->getParam<int>(ParamNames::WIDTH);
     pubConf.height = ph->getParam<int>(ParamNames::HEIGHT);
-    pubConf.socket = ph->getSocketID();
+    pubConf.socket = depthSocket;
     pubConf.calibrationFile = ph->getParam<std::string>(ParamNames::CALIBRATION_FILE);
     pubConf.leftSocket = leftSensInfo.socket;
     pubConf.rightSocket = rightSensInfo.socket;

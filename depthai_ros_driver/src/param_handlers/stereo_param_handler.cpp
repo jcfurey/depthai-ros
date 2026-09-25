@@ -60,7 +60,7 @@ StereoParamHandler::StereoParamHandler(std::shared_ptr<rclcpp::Node> node, const
     declareAndLogParam<bool>(ParamNames::REVERSE_STEREO_SOCKET_ORDER, false);
     declareAndLogParam<bool>(ParamNames::PUBLISH_COMPRESSED, false);
     declareAndLogParam<float>(ParamNames::FPS, 30);
-    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 8);
+    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 8, getRangedIntDescriptor(1, 1000));
     declareAndLogParam<std::string>(ParamNames::CALIBRATION_FILE, "");
 
     declareAndLogParam<bool>("i_left_rect_publish_topic", false);
@@ -196,7 +196,7 @@ void StereoParamHandler::declareParams(std::shared_ptr<dai::node::StereoDepth> s
     if(declareAndLogParam<bool>("i_enable_decimation_filter", false)) {
         config->postProcessing.decimationFilter.decimationMode =
             utils::getValFromMap(declareAndLogParam<std::string>("i_decimation_filter_decimation_mode", "PIXEL_SKIPPING"), decimationModeMap);
-        config->postProcessing.decimationFilter.decimationFactor = declareAndLogParam<int>("i_decimation_filter_decimation_factor", 1);
+        config->postProcessing.decimationFilter.decimationFactor = declareAndLogParam<int>("i_decimation_filter_decimation_factor", 1, getRangedIntDescriptor(1, 4));
         int decimatedWidth = width / config->postProcessing.decimationFilter.decimationFactor;
         int decimatedHeight = height / config->postProcessing.decimationFilter.decimationFactor;
         RCLCPP_INFO(getROSNode()->get_logger(),

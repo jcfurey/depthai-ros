@@ -1,5 +1,7 @@
 #include "depthai_ros_driver/dai_nodes/base_node.hpp"
 
+#include "depthai/pipeline/MessageQueue.hpp"
+
 #include "depthai/common/CameraBoardSocket.hpp"
 #include "depthai/device/Device.hpp"
 #include "depthai/pipeline/Pipeline.hpp"
@@ -71,6 +73,19 @@ dai::Node::Input& BaseNode::getInputByName(const std::string& /*name*/) {
 void BaseNode::closeQueues() {
     throw(std::runtime_error("closeQueues() not implemented"));
 };
+
+void BaseNode::closeQueue(const std::shared_ptr<dai::MessageQueue>& queue, int& callbackId) {
+    if(!queue) {
+        return;
+    }
+    if(callbackId >= 0) {
+        queue->removeCallback(callbackId);
+        callbackId = -1;
+    }
+    if(!queue->isClosed()) {
+        queue->close();
+    }
+}
 
 std::shared_ptr<sensor_helpers::ImagePublisher> BaseNode::setupOutput(
     std::shared_ptr<dai::Pipeline> pipeline, const std::string& qName, dai::Node::Output* out, bool isSynced, const utils::VideoEncoderConfig& encoderConfig) {

@@ -151,7 +151,7 @@ void Driver::onConfigure() {
     if(ph->getParam<bool>("i_publish_tf_from_calibration")) {
         try {
             tfPub = std::make_unique<depthai_bridge::TFPublisher>(getNodeHandle(),
-                                                                  device->readCalibration(),
+                                                                  device->getCalibration(),
                                                                   device->getConnectedCameraFeatures(),
                                                                   ph->getParam<std::string>("i_tf_device_name"),
                                                                   camModel,
@@ -313,7 +313,8 @@ void Driver::restart() {
 }
 
 void Driver::saveCalib() {
-    auto calibHandler = device->readCalibration();
+    // Save the calibration in use, including any external or auto-calibration override.
+    auto calibHandler = device->getCalibration();
     std::stringstream savePath;
     savePath << "/tmp/" << device->getDeviceId().c_str() << "_calibration.json";
     RCLCPP_INFO(get_logger(), "Saving calibration to: %s", savePath.str().c_str());
@@ -682,8 +683,12 @@ void Driver::parametersAppliedCB(const std::vector<rclcpp::Parameter>& params) {
     }
     std::lock_guard<std::mutex> lock(pendingParamsMtx);
     for(const auto& param : params) {
+        const bool runtimeParam = param.get_name().find(".r_") != std::string::npos;
         if(param.get_name().find(".i_") != std::string::npos || param.get_name().rfind("diagnostics.", 0) == 0) configurationDirty = true;
-        if(camRunning && param.get_name().find(".r_") != std::string::npos) {
+        // A configured-but-inactive pipeline captured runtime values as its initial controls;
+        // rebuild on activation so changes made while inactive are not silently dropped.
+        if(!camRunning && runtimeParam) configurationDirty = true;
+        if(camRunning && runtimeParam) {
             // Retain only the latest committed value; bound pending work by parameter count.
             auto it = std::find_if(pendingParams.begin(), pendingParams.end(), [&](const auto& p) { return p.get_name() == param.get_name(); });
             if(it == pendingParams.end())

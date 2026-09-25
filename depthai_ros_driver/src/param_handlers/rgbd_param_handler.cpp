@@ -13,7 +13,7 @@ RGBDParamHandler::~RGBDParamHandler() = default;
 void RGBDParamHandler::declareParams(std::shared_ptr<dai::node::RGBD> rgbd, dai::CameraBoardSocket socket) {
     declareAndLogParam<bool>(ParamNames::PUBLISH_TOPIC, true);
     declareAndLogParam<int>(ParamNames::BOARD_SOCKET_ID, static_cast<int>(socket));
-    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 2);
+    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 2, getRangedIntDescriptor(1, 1000));
     declareAndLogParam<bool>(ParamNames::GET_BASE_DEVICE_TIMESTAMP, false);
     declareAndLogParam<bool>(ParamNames::UPDATE_ROS_BASE_TIME_ON_ROS_MSG, false);
     int threadNum = declareAndLogParam<int>("i_num_threads", 1);

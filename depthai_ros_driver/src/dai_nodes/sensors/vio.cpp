@@ -102,11 +102,11 @@ void Vio::setupQueues(std::shared_ptr<dai::Device> /* device */) {
     odomConv->setCovariance(ph->getParam<std::vector<double>>("i_covariance"));
 
     odomPub = getROSNode()->create_publisher<nav_msgs::msg::Odometry>("~/" + getName() + "/odometry", ph->getParam<int>(ParamNames::MAX_Q_SIZE), options);
-    transQ->addCallback(std::bind(&Vio::transCB, this, std::placeholders::_1, std::placeholders::_2));
+    transQCBID = transQ->addCallback(std::bind(&Vio::transCB, this, std::placeholders::_1, std::placeholders::_2));
 }
 
 void Vio::closeQueues() {
-    transQ->close();
+    closeQueue(transQ, transQCBID);
 }
 
 void Vio::transCB(const std::string& /*name*/, const std::shared_ptr<dai::ADatatype>& data) {

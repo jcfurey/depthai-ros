@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <deque>
 #include <iostream>
 #include <memory>
@@ -60,64 +61,26 @@ class ImuConverter : public BaseConverter {
     std::deque<dai::IMUReportMagneticField> magnHist;
     template <typename T>
     void FillImuData_LinearInterpolation(std::vector<dai::IMUPacket>& imuPackets, std::deque<T>& imuMsgs) {
-        for(int i = 0; i < imuPackets.size(); ++i) {
-            if(accelHist.size() == 0) {
-                accelHist.push_back(imuPackets[i].acceleroMeter);
-            } else if(accelHist.back().sequence != imuPackets[i].acceleroMeter.sequence) {
-                accelHist.push_back(imuPackets[i].acceleroMeter);
+        for(const auto& packet : imuPackets) {
+            appendIfNew(accelHist, packet.acceleroMeter);
+            appendIfNew(gyroHist, packet.gyroscope);
+            if(enable_rotation) {
+                appendIfNew(rotationHist, packet.rotationVector);
             }
-
-            if(gyroHist.size() == 0) {
-                gyroHist.push_back(imuPackets[i].gyroscope);
-            } else if(gyroHist.back().sequence != imuPackets[i].gyroscope.sequence) {
-                gyroHist.push_back(imuPackets[i].gyroscope);
-            }
-
-            if(enable_rotation && rotationHist.size() == 0) {
-                rotationHist.push_back(imuPackets[i].rotationVector);
-            } else if(enable_rotation && rotationHist.back().sequence != imuPackets[i].rotationVector.sequence) {
-                rotationHist.push_back(imuPackets[i].rotationVector);
-            } else {
-                rotationHist.resize(accelHist.size());
-            }
-
-            if(enable_magn && magnHist.size() == 0) {
-                magnHist.push_back(imuPackets[i].magneticField);
-            } else if(enable_magn && magnHist.back().sequence != imuPackets[i].magneticField.sequence) {
-                magnHist.push_back(imuPackets[i].magneticField);
-            } else {
-                magnHist.resize(accelHist.size());
+            if(enable_magn) {
+                appendIfNew(magnHist, packet.magneticField);
             }
 
             if(syncMode == ImuSyncMethod::LINEAR_INTERPOLATE_ACCEL) {
-                if(accelHist.size() < 3 && gyroHist.size() && rotationHist.size() && magnHist.size()) {
+                if(accelHist.size() < 3) {
                     continue;
-                } else {
-                    if(enable_rotation) {
-                        if(enable_magn) {
-                            interpolate(accelHist, gyroHist, rotationHist, magnHist, imuMsgs);
-                        } else {
-                            interpolate(accelHist, gyroHist, rotationHist, imuMsgs);
-                        }
-                    } else {
-                        interpolate(accelHist, gyroHist, imuMsgs);
-                    }
                 }
-
+                interpolate(accelHist, gyroHist, imuMsgs);
             } else if(syncMode == ImuSyncMethod::LINEAR_INTERPOLATE_GYRO) {
-                if(gyroHist.size() < 3 && accelHist.size() && rotationHist.size() && magnHist.size()) {
+                if(gyroHist.size() < 3) {
                     continue;
-                } else {
-                    if(enable_rotation) {
-                        if(enable_magn) {
-                            interpolate(gyroHist, accelHist, rotationHist, magnHist, imuMsgs);
-                        } else {
-                            interpolate(gyroHist, accelHist, rotationHist, imuMsgs);
-                        }
-                    } else {
-                        interpolate(gyroHist, accelHist, imuMsgs);
-                    }
                 }
+                interpolate(gyroHist, accelHist, imuMsgs);
             }
         }
     }
@@ -127,6 +90,7 @@ class ImuConverter : public BaseConverter {
     bool enable_rotation;
     bool enable_magn;
     ImuSyncMethod syncMode;
+    static void setOrientationUnknown(ImuMsgs::Imu& msg);
     void fillImuMsg(ImuMsgs::Imu& msg, dai::IMUReportAccelerometer report);
     void fillImuMsg(ImuMsgs::Imu& msg, dai::IMUReportGyroscope report);
     void fillImuMsg(ImuMsgs::Imu& msg, dai::IMUReportRotationVectorWAcc report);
@@ -138,7 +102,7 @@ class ImuConverter : public BaseConverter {
     void fillImuMsg(depthai_ros_msgs::msg::ImuWithMagneticField& msg, dai::IMUReportMagneticField report);
 
     template <typename I, typename S, typename T, typename F, typename M>
-    void CreateUnitMessage(M& msg, std::chrono::_V2::steady_clock::time_point timestamp, I first, S second, T third, F fourth) {
+    void CreateUnitMessage(M& msg, std::chrono::steady_clock::time_point timestamp, I first, S second, T third, F fourth) {
         fillImuMsg(msg, first);
         fillImuMsg(msg, second);
         fillImuMsg(msg, third);
@@ -150,7 +114,7 @@ class ImuConverter : public BaseConverter {
     }
 
     template <typename I, typename S, typename T, typename M>
-    void CreateUnitMessage(M& msg, std::chrono::_V2::steady_clock::time_point timestamp, I first, S second, T third) {
+    void CreateUnitMessage(M& msg, std::chrono::steady_clock::time_point timestamp, I first, S second, T third) {
         fillImuMsg(msg, first);
         fillImuMsg(msg, second);
         fillImuMsg(msg, third);
@@ -161,13 +125,57 @@ class ImuConverter : public BaseConverter {
     }
 
     template <typename I, typename S, typename M>
-    void CreateUnitMessage(M& msg, std::chrono::_V2::steady_clock::time_point timestamp, I first, S second) {
+    void CreateUnitMessage(M& msg, std::chrono::steady_clock::time_point timestamp, I first, S second) {
         fillImuMsg(msg, first);
         fillImuMsg(msg, second);
 
         msg.header.frame_id = frameName;
 
         msg.header.stamp = toRosTime(timestamp);
+    }
+
+    template <typename M>
+    static ImuMsgs::Imu& imuOf(M& msg) {
+        return msg.imu;
+    }
+    static ImuMsgs::Imu& imuOf(ImuMsgs::Imu& msg) {
+        return msg;
+    }
+
+    template <typename R>
+    static void appendIfNew(std::deque<R>& hist, const R& report) {
+        if(hist.empty() || hist.back().sequence != report.sequence) {
+            hist.push_back(report);
+        }
+    }
+
+    // Returns the newest report generated at or before ts, discarding older history.
+    template <typename R>
+    static const R* latestAtOrBefore(std::deque<R>& hist, std::chrono::steady_clock::time_point ts) {
+        while(hist.size() > 1 && hist[1].getTimestamp() <= ts) {
+            hist.pop_front();
+        }
+        if(hist.empty() || hist.front().getTimestamp() > ts) {
+            return nullptr;
+        }
+        return &hist.front();
+    }
+
+    // Rotation and magnetic field arrive at their own rates, so they are sampled-and-held by
+    // timestamp rather than paired positionally with the interpolated streams.
+    template <typename M>
+    void fillAuxiliary(M& msg, std::chrono::steady_clock::time_point ts) {
+        const dai::IMUReportRotationVectorWAcc* rot = enable_rotation ? latestAtOrBefore(rotationHist, ts) : nullptr;
+        if(rot != nullptr) {
+            fillImuMsg(msg, *rot);
+        } else {
+            setOrientationUnknown(imuOf(msg));
+        }
+        if(enable_magn) {
+            if(const auto* magn = latestAtOrBefore(magnHist, ts)) {
+                fillImuMsg(msg, *magn);
+            }
+        }
     }
 
     template <typename I, typename S, typename M>
@@ -193,13 +201,14 @@ class ImuConverter : public BaseConverter {
                         const double alpha = diff.count() / dt;
                         I interp = lerpImu(interp0, interp1, alpha);
                         M msg;
-                        std::chrono::_V2::steady_clock::time_point tstamp;
+                        std::chrono::steady_clock::time_point tstamp;
                         if(getBaseDeviceTimestamp)
                             tstamp = currSecond.getTimestampDevice();
                         else
                             tstamp = currSecond.getTimestamp();
                         CreateUnitMessage(msg, tstamp, interp, currSecond);
-                        imuMsgs.push_back(msg);
+                        fillAuxiliary(msg, currSecond.getTimestamp());
+                        imuMsgs.push_back(std::move(msg));
                         second.pop_front();
                     } else if(currSecond.timestamp.get() > interp1.timestamp.get()) {
                         interp0 = interp1;
@@ -213,120 +222,6 @@ class ImuConverter : public BaseConverter {
                         }
                     } else {
                         second.pop_front();
-                    }
-                }
-                interp0 = interp1;
-            }
-        }
-        interpolated.push_back(interp0);
-    }
-
-    template <typename I, typename S, typename T, typename M>
-    void interpolate(std::deque<I>& interpolated, std::deque<S>& second, std::deque<T>& third, std::deque<M>& imuMsgs) {
-        I interp0, interp1;
-        S currSecond;
-        T currThird;
-        interp0.sequence = -1;
-        while(interpolated.size()) {
-            if(interp0.sequence == -1) {
-                interp0 = interpolated.front();
-                interpolated.pop_front();
-            } else {
-                interp1 = interpolated.front();
-                interpolated.pop_front();
-                // remove std::milli to get in seconds
-                std::chrono::duration<double, std::milli> duration_ms = interp1.timestamp.get() - interp0.timestamp.get();
-                double dt = duration_ms.count();
-                while(second.size()) {
-                    currSecond = second.front();
-                    currThird = third.front();
-                    if(currSecond.timestamp.get() > interp0.timestamp.get() && currSecond.timestamp.get() <= interp1.timestamp.get()) {
-                        // remove std::milli to get in seconds
-                        std::chrono::duration<double, std::milli> diff = currSecond.timestamp.get() - interp0.timestamp.get();
-                        const double alpha = diff.count() / dt;
-                        I interp = lerpImu(interp0, interp1, alpha);
-                        M msg;
-                        std::chrono::_V2::steady_clock::time_point tstamp;
-                        if(getBaseDeviceTimestamp)
-                            tstamp = currSecond.getTimestampDevice();
-                        else
-                            tstamp = currSecond.getTimestamp();
-                        CreateUnitMessage(msg, tstamp, interp, currSecond, currThird);
-                        imuMsgs.push_back(msg);
-                        second.pop_front();
-                        third.pop_front();
-                    } else if(currSecond.timestamp.get() > interp1.timestamp.get()) {
-                        interp0 = interp1;
-                        if(interpolated.size()) {
-                            interp1 = interpolated.front();
-                            interpolated.pop_front();
-                            duration_ms = interp1.timestamp.get() - interp0.timestamp.get();
-                            dt = duration_ms.count();
-                        } else {
-                            break;
-                        }
-                    } else {
-                        second.pop_front();
-                        third.pop_front();
-                    }
-                }
-                interp0 = interp1;
-            }
-        }
-        interpolated.push_back(interp0);
-    }
-
-    template <typename I, typename S, typename T, typename F, typename M>
-    void interpolate(std::deque<I>& interpolated, std::deque<S>& second, std::deque<T>& third, std::deque<F>& fourth, std::deque<M>& imuMsgs) {
-        I interp0, interp1;
-        S currSecond;
-        T currThird;
-        F currFourth;
-        interp0.sequence = -1;
-        while(interpolated.size()) {
-            if(interp0.sequence == -1) {
-                interp0 = interpolated.front();
-                interpolated.pop_front();
-            } else {
-                interp1 = interpolated.front();
-                interpolated.pop_front();
-                // remove std::milli to get in seconds
-                std::chrono::duration<double, std::milli> duration_ms = interp1.timestamp.get() - interp0.timestamp.get();
-                double dt = duration_ms.count();
-                while(second.size()) {
-                    currSecond = second.front();
-                    currThird = third.front();
-                    currFourth = fourth.front();
-                    if(currSecond.timestamp.get() > interp0.timestamp.get() && currSecond.timestamp.get() <= interp1.timestamp.get()) {
-                        // remove std::milli to get in seconds
-                        std::chrono::duration<double, std::milli> diff = currSecond.timestamp.get() - interp0.timestamp.get();
-                        const double alpha = diff.count() / dt;
-                        I interp = lerpImu(interp0, interp1, alpha);
-                        M msg;
-                        std::chrono::_V2::steady_clock::time_point tstamp;
-                        if(getBaseDeviceTimestamp)
-                            tstamp = currSecond.getTimestampDevice();
-                        else
-                            tstamp = currSecond.getTimestamp();
-                        CreateUnitMessage(msg, tstamp, interp, currSecond, currThird, currFourth);
-                        imuMsgs.push_back(msg);
-                        second.pop_front();
-                        third.pop_front();
-                        fourth.pop_front();
-                    } else if(currSecond.timestamp.get() > interp1.timestamp.get()) {
-                        interp0 = interp1;
-                        if(interpolated.size()) {
-                            interp1 = interpolated.front();
-                            interpolated.pop_front();
-                            duration_ms = interp1.timestamp.get() - interp0.timestamp.get();
-                            dt = duration_ms.count();
-                        } else {
-                            break;
-                        }
-                    } else {
-                        second.pop_front();
-                        third.pop_front();
-                        fourth.pop_front();
                     }
                 }
                 interp0 = interp1;

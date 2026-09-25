@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include <depthai/common/Point3fRGBA.hpp>
+#include <cmath>
+#include <cstring>
 #include <deque>
 #include <memory>
 
@@ -302,4 +304,48 @@ TEST(PointCloudConverterTest, ToRosMsgNonColoredPointsWithDepthUnitsTest) {
     EXPECT_NEAR(dataCustom[4], 5.0f, 1e-6);
     EXPECT_NEAR(dataCustom[5], 6.0f, 1e-6);
 }
+TEST(PointCloudConverterTest, OrganizedCloudMarksInvalidPointsNaN) {
+    dai::PointCloudData pclData;
+    pclData.setWidth(2);
+    pclData.setHeight(2);
+    pclData.setColor(false);
+    pclData.setPoints({{1.0f, 2.0f, 3.0f}, {0.0f, 0.0f, 0.0f}, {4.0f, 5.0f, 6.0f}, {7.0f, 8.0f, 9.0f}});
+
+    PointCloudConverter converter("test_frame", false);
+    std::deque<sensor_msgs::msg::PointCloud2> pclMsgs;
+    converter.toRosMsg(std::make_shared<dai::PointCloudData>(pclData), pclMsgs);
+
+    ASSERT_EQ(pclMsgs.size(), 1);
+    const auto& msg = pclMsgs.front();
+    EXPECT_EQ(msg.width, 2u);
+    EXPECT_EQ(msg.height, 2u);
+    EXPECT_FALSE(msg.is_dense);
+    const float* data = reinterpret_cast<const float*>(msg.data.data());
+    EXPECT_FLOAT_EQ(data[2], 3.0f);
+    EXPECT_TRUE(std::isnan(data[3]));
+    EXPECT_TRUE(std::isnan(data[4]));
+    EXPECT_TRUE(std::isnan(data[5]));
+    EXPECT_FLOAT_EQ(data[11], 9.0f);
+}
+
+TEST(PointCloudConverterTest, SparseCloudIsDenseRowOfPoints) {
+    dai::PointCloudData pclData;
+    pclData.setWidth(640);
+    pclData.setHeight(1);
+    pclData.setColor(false);
+    pclData.setPoints({{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}, {7.0f, 8.0f, 9.0f}});
+
+    PointCloudConverter converter("test_frame", false);
+    std::deque<sensor_msgs::msg::PointCloud2> pclMsgs;
+    converter.toRosMsg(std::make_shared<dai::PointCloudData>(pclData), pclMsgs);
+
+    ASSERT_EQ(pclMsgs.size(), 1);
+    const auto& msg = pclMsgs.front();
+    EXPECT_EQ(msg.width, 3u);
+    EXPECT_EQ(msg.height, 1u);
+    EXPECT_TRUE(msg.is_dense);
+    EXPECT_EQ(msg.data.size(), 3u * msg.point_step);
+    EXPECT_EQ(msg.row_step, 3u * msg.point_step);
+}
+
 }  // namespace depthai_bridge

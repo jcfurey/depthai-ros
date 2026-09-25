@@ -143,10 +143,7 @@ class Detection : public BaseNode {
      * @brief      Closes the queues for the DetectionNetwork node and the passthrough.
      */
     void closeQueues() override {
-        if(nnQ) {
-            nnQ->removeCallback(nnQCBID);
-            nnQ->close();
-        }
+        closeQueue(nnQ, nnQCBID);
         if(ptPub) {
             ptPub->closeQueue();
         }

@@ -76,7 +76,7 @@ void Segmentation::setInOut(std::shared_ptr<dai::Pipeline> /* pipeline */) {}
 void Segmentation::setupQueues(std::shared_ptr<dai::Device> device) {
     nnQ = segNode->out.createOutputQueue(ph->getParam<int>("i_max_q_size"), false);
     nnPub = image_transport::create_camera_publisher(getROSNode().get(), "~/" + getName() + "/image_raw");
-    nnQ->addCallback(std::bind(&Segmentation::segmentationCB, this, std::placeholders::_1, std::placeholders::_2));
+    nnQCBID = nnQ->addCallback(std::bind(&Segmentation::segmentationCB, this, std::placeholders::_1, std::placeholders::_2));
     if(ph->getParam<bool>("i_enable_passthrough")) {
         auto tfPrefix = getOpticalFrameName(getSocketName(ph->getSocketID()));
         ptQ = segNode->passthrough.createOutputQueue(ph->getParam<int>("i_max_q_size"), false);
@@ -84,18 +84,16 @@ void Segmentation::setupQueues(std::shared_ptr<dai::Device> device) {
         imageConverter->setClock(getROSNode()->get_clock());
         infoManager = std::make_shared<camera_info_manager::CameraInfoManager>(
             getROSNode()->create_sub_node(std::string(getROSNode()->get_name()) + "/" + getName()).get(), "/" + getName());
-        infoManager->setCameraInfo(sensor_helpers::getCalibInfo(getROSNode()->get_logger(), imageConverter, device->readCalibration(), ph->getSocketID()));
+        infoManager->setCameraInfo(sensor_helpers::getCalibInfo(getROSNode()->get_logger(), imageConverter, device->getCalibration(), ph->getSocketID()));
 
         ptPub = image_transport::create_camera_publisher(getROSNode().get(), "~/" + getName() + "/passthrough/image_raw");
-        ptQ->addCallback(std::bind(sensor_helpers::basicCameraPub, std::placeholders::_1, std::placeholders::_2, *imageConverter, ptPub, infoManager));
+        ptQCBID = ptQ->addCallback(std::bind(sensor_helpers::basicCameraPub, std::placeholders::_1, std::placeholders::_2, *imageConverter, ptPub, infoManager));
     }
 }
 
 void Segmentation::closeQueues() {
-    nnQ->close();
-    if(ph->getParam<bool>("i_enable_passthrough")) {
-        ptQ->close();
-    }
+    closeQueue(nnQ, nnQCBID);
+    closeQueue(ptQ, ptQCBID);
 }
 cv::Mat xarray_to_mat(xt::xarray<int> xarr) {
     cv::Mat mat(xarr.shape()[0], xarr.shape()[1], CV_32SC1, xarr.data());

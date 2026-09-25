@@ -58,7 +58,9 @@ class SpatialDetection : public BaseNode {
         RCLCPP_DEBUG(getLogger(), "Node %s created", daiNodeName.c_str());
         setInOut(pipeline);
     }
-    ~SpatialDetection() = default;
+    ~SpatialDetection() {
+        closeQueues();
+    };
     void setupQueues(std::shared_ptr<dai::Device> device) override {
         nnQ = spatialNode->out.createOutputQueue(ph->getParam<int>("i_max_q_size"), false);
         std::string socketName = getSocketName(ph->getSocketID());
@@ -66,7 +68,7 @@ class SpatialDetection : public BaseNode {
         detConverter = std::make_unique<depthai_bridge::SpatialDetectionConverter>(tfPrefix, false, ph->getParam<bool>("i_get_base_device_timestamp"));
         detConverter->setClock(getROSNode()->get_clock());
         detConverter->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>("i_update_ros_base_time_on_ros_msg"));
-        nnQ->addCallback(std::bind(&SpatialDetection::spatialCB, this, std::placeholders::_1, std::placeholders::_2));
+        nnQCBID = nnQ->addCallback(std::bind(&SpatialDetection::spatialCB, this, std::placeholders::_1, std::placeholders::_2));
         rclcpp::PublisherOptions options;
         options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
         detPub = getROSNode()->template create_publisher<vision_msgs::msg::Detection3DArray>("~/" + getName() + "/spatial_detections", 10, options);
@@ -132,10 +134,7 @@ class SpatialDetection : public BaseNode {
         }
     };
     void closeQueues() override {
-        if(nnQ) {
-            nnQ->removeCallback(nnQCBID);
-            nnQ->close();
-        }
+        closeQueue(nnQ, nnQCBID);
         if(ptPub) {
             ptPub->closeQueue();
         }

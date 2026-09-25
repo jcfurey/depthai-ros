@@ -48,12 +48,17 @@ void ImuConverter::fillImuMsg(ImuMsgs::Imu& msg, dai::IMUReportRotationVectorWAc
         msg.orientation.w = report.real;
         msg.orientation_covariance = {rotation_cov, 0.0, 0.0, 0.0, rotation_cov, 0.0, 0.0, 0.0, rotation_cov};
     } else {
-        msg.orientation.x = 0.0;
-        msg.orientation.y = 0.0;
-        msg.orientation.z = 0.0;
-        msg.orientation.w = 1.0;
-        msg.orientation_covariance = {-1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+        setOrientationUnknown(msg);
     }
+}
+
+void ImuConverter::setOrientationUnknown(ImuMsgs::Imu& msg) {
+    // sensor_msgs/Imu: orientation_covariance[0] == -1 means no orientation estimate.
+    msg.orientation.x = 0.0;
+    msg.orientation.y = 0.0;
+    msg.orientation.z = 0.0;
+    msg.orientation.w = 1.0;
+    msg.orientation_covariance = {-1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 }
 
 void ImuConverter::fillImuMsg(ImuMsgs::Imu& msg, dai::IMUReportMagneticField report) {
@@ -92,19 +97,16 @@ void ImuConverter::toRosMsg(std::shared_ptr<dai::IMUData> inData, std::deque<Imu
             auto gyro = inData->packets[i].gyroscope;
 
             ImuMsgs::Imu msg;
-            std::chrono::_V2::steady_clock::time_point tstamp;
+            std::chrono::steady_clock::time_point tstamp;
             if(getBaseDeviceTimestamp)
                 tstamp = accel.getTimestampDevice();
             else
                 tstamp = accel.getTimestamp();
-            if(enable_rotation) {
-                auto rot = inData->packets[i].rotationVector;
-                CreateUnitMessage(msg, tstamp, accel, gyro, rot);
-            } else {
-                CreateUnitMessage(msg, tstamp, accel, gyro);
-            }
+            // The rotation fill marks orientation unknown when rotation is disabled.
+            auto rot = inData->packets[i].rotationVector;
+            CreateUnitMessage(msg, tstamp, accel, gyro, rot);
 
-            outImuMsgs.push_back(msg);
+            outImuMsgs.push_back(std::move(msg));
         }
     }
 }
@@ -122,13 +124,13 @@ void ImuConverter::toRosDaiMsg(std::shared_ptr<dai::IMUData> inData, std::deque<
             auto rot = inData->packets[i].rotationVector;
             auto magn = inData->packets[i].magneticField;
             depthai_ros_msgs::msg::ImuWithMagneticField msg;
-            std::chrono::_V2::steady_clock::time_point tstamp;
+            std::chrono::steady_clock::time_point tstamp;
             if(getBaseDeviceTimestamp)
                 tstamp = accel.getTimestampDevice();
             else
                 tstamp = accel.getTimestamp();
             CreateUnitMessage(msg, tstamp, accel, gyro, rot, magn);
-            outImuMsgs.push_back(msg);
+            outImuMsgs.push_back(std::move(msg));
         }
     }
     for(auto& msg : outImuMsgs) {

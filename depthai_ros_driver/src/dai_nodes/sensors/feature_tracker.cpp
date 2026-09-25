@@ -46,11 +46,11 @@ void FeatureTracker::setupQueues(std::shared_ptr<dai::Device> /* device */) {
     featureConverter->setUpdateRosBaseTimeOnToRosMsg(ph->getParam<bool>("i_update_ros_base_time_on_ros_msg"));
 
     featurePub = getROSNode()->create_publisher<depthai_ros_msgs::msg::TrackedFeatures>("~/" + getName() + "/tracked_features", 10, options);
-    featureQ->addCallback(std::bind(&FeatureTracker::featureQCB, this, std::placeholders::_1, std::placeholders::_2));
+    featureQCBID = featureQ->addCallback(std::bind(&FeatureTracker::featureQCB, this, std::placeholders::_1, std::placeholders::_2));
 }
 
 void FeatureTracker::closeQueues() {
-    featureQ->close();
+    closeQueue(featureQ, featureQCBID);
 }
 
 void FeatureTracker::featureQCB(const std::string& /*name*/, const std::shared_ptr<dai::ADatatype>& data) {

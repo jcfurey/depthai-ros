@@ -35,7 +35,7 @@ void ToFParamHandler::declareParams(std::shared_ptr<dai::node::ToF> tof, dai::Ca
     declareAndLogParam<bool>(ParamNames::ENABLE_LAZY_PUBLISHER, false);
     declareAndLogParam<bool>(ParamNames::REVERSE_STEREO_SOCKET_ORDER, false);
     declareAndLogParam<std::string>(ParamNames::CALIBRATION_FILE, "");
-    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 8);
+    declareAndLogParam<int>(ParamNames::MAX_Q_SIZE, 8, getRangedIntDescriptor(1, 1000));
     declareAndLogParam<int>(ParamNames::WIDTH, 640);
     declareAndLogParam<int>(ParamNames::HEIGHT, 400);
     declareAndLogParam<bool>(ParamNames::ALIGNED, false);

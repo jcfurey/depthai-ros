@@ -95,6 +95,7 @@ class Slam : public BaseNode {
     std::shared_ptr<dai::node::RTABMapSLAM> slamNode;
     std::unique_ptr<param_handlers::SlamParamHandler> ph;
     std::shared_ptr<dai::MessageQueue> mapToOdomQ, absolutePoseQ, mapQ, groundPclQ, obstaclePclQ;
+    int mapToOdomQCBID = -1, absolutePoseQCBID = -1, mapQCBID = -1, groundPclQCBID = -1, obstaclePclQCBID = -1;
     std::shared_ptr<dai::InputQueue> externalOdomQ;
     std::shared_ptr<tf2_ros::TransformBroadcaster> tfBr;
     std::shared_ptr<tf2_ros::TransformListener> tfListener;

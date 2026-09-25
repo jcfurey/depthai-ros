@@ -1,5 +1,7 @@
 #include "depthai_bridge/ImageConverter.hpp"
 
+#include <limits>
+
 #if __has_include("cv_bridge/cv_bridge.hpp")
     #include "cv_bridge/cv_bridge.hpp"
 #else
@@ -68,61 +70,63 @@ ImageMsgs::Image ImageConverter::toRosMsgRawPtr(std::shared_ptr<dai::EncodedFram
     outImageMsg.header = header;
 
     if(fromBitstream) {
-        std::string encoding;
         int decodeFlags;
-        int channels;
-        cv::Mat output;
         switch(srcType) {
-            case dai::ImgFrame::Type::BGR888i: {
-                encoding = sensor_msgs::image_encodings::BGR8;
+            case dai::ImgFrame::Type::BGR888i:
+            case dai::ImgFrame::Type::RGB888i:
+            case dai::ImgFrame::Type::NV12:
+                // imdecode always returns BGR channel order for colour images.
                 decodeFlags = cv::IMREAD_COLOR;
-                channels = CV_8UC3;
                 break;
-            }
-            case dai::ImgFrame::Type::NV12: {
-                encoding = sensor_msgs::image_encodings::BGR8;
-                decodeFlags = cv::IMREAD_COLOR;
-                channels = CV_8UC1;
-                break;
-            }
-            case dai::ImgFrame::Type::RGB888i: {
-                encoding = sensor_msgs::image_encodings::RGB8;
-                decodeFlags = cv::IMREAD_COLOR;
-                channels = CV_8UC3;
-                break;
-            }
-            case dai::ImgFrame::Type::GRAY8: {
-                encoding = sensor_msgs::image_encodings::MONO8;
+            case dai::ImgFrame::Type::GRAY8:
+            case dai::ImgFrame::Type::RAW8:
                 decodeFlags = cv::IMREAD_GRAYSCALE;
-                channels = CV_8UC1;
                 break;
-            }
-            case dai::ImgFrame::Type::RAW8: {
-                encoding = sensor_msgs::image_encodings::TYPE_16UC1;
-                decodeFlags = cv::IMREAD_ANYDEPTH;
-                channels = CV_16UC1;
-                break;
-            }
-            default: {
-                std::cout << frameName << static_cast<int>(srcType) << std::endl;
-                throw(std::runtime_error("Converted type not supported!"));
-            }
+            default:
+                throw std::runtime_error("Unsupported bitstream source type " + std::to_string(static_cast<int>(srcType)) + " for frame " + frameName);
         }
 
-        output = cv::imdecode(cv::Mat(1, inData->getData().size(), channels, inData->getData().data()), decodeFlags);
+        // The encoded bitstream is a flat byte buffer regardless of the decoded pixel format.
+        auto data = inData->getData();
+        cv::Mat output = cv::imdecode(cv::Mat(1, static_cast<int>(data.size()), CV_8UC1, data.data()), decodeFlags);
+        if(output.empty()) {
+            throw std::runtime_error("Failed to decode bitstream frame for " + frameName);
+        }
 
         // converting disparity
         if(dispToDepth) {
-            auto factor = std::abs(baseline * 10) * info.p[0];
-            cv::Mat depthOut = cv::Mat(cv::Size(output.cols, output.rows), CV_16UC1);
-            depthOut.forEach<uint16_t>([&output, &factor](uint16_t& pixel, const int* position) -> void {
-                auto disp = output.at<uint8_t>(position);
-                if(disp == 0)
-                    pixel = 0;
-                else
-                    pixel = factor / disp;
+            double fx = info.p[0];
+            if(fx <= 0.0) {
+                fx = generateCameraInfo(inData).p[0];
+            }
+            if(fx <= 0.0) {
+                throw std::runtime_error("Disparity-to-depth conversion requires a positive focal length for " + frameName);
+            }
+            // Baseline is in centimetres; depth is published in millimetres.
+            const double factor = std::abs(baseline * 10) * fx;
+            cv::Mat depthOut(output.rows, output.cols, CV_16UC1);
+            depthOut.forEach<uint16_t>([&output, factor](uint16_t& pixel, const int* position) -> void {
+                const auto disp = output.at<uint8_t>(position);
+                const double depth = disp == 0 ? 0.0 : factor / disp;
+                // 16UC1 depth uses 0 for "no measurement"; out-of-range depth is invalid rather than clamped.
+                pixel = depth > std::numeric_limits<uint16_t>::max() ? 0 : static_cast<uint16_t>(depth);
             });
-            output = depthOut.clone();
+            output = depthOut;
+        }
+
+        std::string encoding;
+        switch(output.type()) {
+            case CV_8UC1:
+                encoding = sensor_msgs::image_encodings::MONO8;
+                break;
+            case CV_8UC3:
+                encoding = sensor_msgs::image_encodings::BGR8;
+                break;
+            case CV_16UC1:
+                encoding = sensor_msgs::image_encodings::TYPE_16UC1;
+                break;
+            default:
+                throw std::runtime_error("Unexpected decoded image type for " + frameName);
         }
         cv_bridge::CvImage(header, encoding, output).toImageMsg(outImageMsg);
     }
@@ -190,8 +194,7 @@ ImageMsgs::Image ImageConverter::toRosMsgRawPtr(std::shared_ptr<dai::ImgFrame> i
             mat.convertTo(frameFp32, CV_32F);
             cv_bridge::CvImage(header, sensor_msgs::image_encodings::TYPE_32FC1, frameFp32).toImageMsg(outImageMsg);
         } else {
-            std::string temp_str(encodingEnumMap[inData->getType()]);
-            outImageMsg.encoding = temp_str;
+            outImageMsg.encoding = encodingEnumMap.at(inData->getType());
             outImageMsg.height = inData->getHeight();
             outImageMsg.width = inData->getWidth();
             outImageMsg.step = inData->getStride();
@@ -206,6 +209,8 @@ ImageMsgs::Image ImageConverter::toRosMsgRawPtr(std::shared_ptr<dai::ImgFrame> i
             outImageMsg.data.reserve(size);
             outImageMsg.data.assign(inData->getData().begin(), inData->getData().end());
         }
+    } else {
+        throw std::runtime_error("Unsupported ImgFrame type " + std::to_string(static_cast<int>(inData->getType())) + " for frame " + frameName);
     }
     return outImageMsg;
 }
@@ -258,36 +263,38 @@ ImagePtr ImageConverter::toRosMsgPtr(std::shared_ptr<dai::ImgFrame> inData) {
 }
 
 void ImageConverter::toDaiMsg(const ImageMsgs::Image& inMsg, dai::ImgFrame& outData) {
-    std::unordered_map<dai::ImgFrame::Type, std::string>::iterator revEncodingIter;
+    dai::ImgFrame::Type type;
     if(daiInterleaved) {
-        revEncodingIter = std::find_if(encodingEnumMap.begin(), encodingEnumMap.end(), [&](const std::pair<dai::ImgFrame::Type, std::string>& pair) {
+        auto revEncodingIter = std::find_if(encodingEnumMap.begin(), encodingEnumMap.end(), [&](const std::pair<const dai::ImgFrame::Type, std::string>& pair) {
             return pair.second == inMsg.encoding;
         });
         if(revEncodingIter == encodingEnumMap.end())
             throw std::runtime_error(
                 "Unable to find DAI encoding for the corresponding "
                 "sensor_msgs::image.encoding stream");
-
+        type = revEncodingIter->first;
         outData.setData(inMsg.data);
     } else {
-        revEncodingIter = std::find_if(encodingEnumMap.begin(), encodingEnumMap.end(), [&](const std::pair<dai::ImgFrame::Type, std::string>& pair) {
-            return pair.second.find(inMsg.encoding) != std::string::npos;
-        });
-
-        std::istringstream f(revEncodingIter->second);
-        std::vector<std::string> encoding_info;
-        std::string s;
-
-        while(getline(f, s, '_')) encoding_info.push_back(s);
-
-        std::vector<std::uint8_t> opData(inMsg.data.size());
-        interleavedToPlanar(inMsg.data, opData, inMsg.height, inMsg.width, std::stoi(encoding_info[0]), std::stoi(encoding_info[1]));
+        // Planar output only exists for 3-channel 8-bit colour; channel order is preserved.
+        if(inMsg.encoding == sensor_msgs::image_encodings::BGR8) {
+            type = dai::ImgFrame::Type::BGR888p;
+        } else if(inMsg.encoding == sensor_msgs::image_encodings::RGB8) {
+            type = dai::ImgFrame::Type::RGB888p;
+        } else {
+            throw std::runtime_error("Planar DAI conversion supports only bgr8/rgb8 images, got " + inMsg.encoding);
+        }
+        const size_t packedSize = static_cast<size_t>(inMsg.width) * inMsg.height * 3;
+        if(inMsg.step != inMsg.width * 3 || inMsg.data.size() < packedSize) {
+            throw std::runtime_error("Planar DAI conversion requires a tightly packed " + inMsg.encoding + " image");
+        }
+        std::vector<std::uint8_t> opData(packedSize);
+        interleavedToPlanar(inMsg.data, opData, inMsg.width, inMsg.height, 3, 1);
         outData.setData(opData);
     }
 
     outData.setWidth(inMsg.width);
     outData.setHeight(inMsg.height);
-    outData.setType(revEncodingIter->first);
+    outData.setType(type);
 }
 
 void ImageConverter::planarToInterleaved(const std::vector<uint8_t>& srcData, std::vector<uint8_t>& destData, int w, int h, int numPlanes, int bpp) {
@@ -348,6 +355,17 @@ cv::Mat ImageConverter::rosMsgtoCvMat(ImageMsgs::Image& inMsg) {
     }
 }
 
+void ImageConverter::setProjectionTranslation(sensor_msgs::msg::CameraInfo& cameraInfo) const {
+    // The stereo translation column (-f * baseline) comes from the calibration estimate, which may
+    // have been generated at a different resolution than this frame. Rescale it by the focal-length
+    // ratio so P[3] / P[0] always equals the metric baseline.
+    const double calibFx = camInfo.p[0];
+    const double scale = calibFx > 0.0 ? cameraInfo.p[0] / calibFx : 0.0;
+    for(int i = 0; i < 3; ++i) {
+        cameraInfo.p[i * 4 + 3] = camInfo.p[i * 4 + 3] * scale;
+    }
+}
+
 sensor_msgs::msg::CameraInfo ImageConverter::generateCameraInfo(std::shared_ptr<dai::ImgFrame> imgFrame) const {
     sensor_msgs::msg::CameraInfo cameraInfo;
 
@@ -381,9 +399,8 @@ sensor_msgs::msg::CameraInfo ImageConverter::generateCameraInfo(std::shared_ptr<
         for(int j = 0; j < 3; ++j) {
             cameraInfo.p[i * 4 + j] = intrinsicMatrix[i][j];
         }
-        // We take extrinsic projection params from initial calibration estimate here
-        cameraInfo.p[i * 4 + 3] = camInfo.p[i * 4 + 3];
     }
+    setProjectionTranslation(cameraInfo);
 
     // Set the rectification matrix (identity matrix)
     for(int i = 0; i < 3; ++i) {
@@ -427,9 +444,8 @@ sensor_msgs::msg::CameraInfo ImageConverter::generateCameraInfo(std::shared_ptr<
         for(int j = 0; j < 3; ++j) {
             cameraInfo.p[i * 4 + j] = intrinsicMatrix[i][j];
         }
-        // We take extrinsic projection params from initial calibration estimate here
-        cameraInfo.p[i * 4 + 3] = camInfo.p[i * 4 + 3];
     }
+    setProjectionTranslation(cameraInfo);
 
     // Set the rectification matrix (identity matrix)
     for(int i = 0; i < 3; ++i) {
@@ -507,7 +523,8 @@ ImageMsgs::CameraInfo ImageConverter::calibrationToCameraInfo(dai::CalibrationHa
                 }
                 cv::Mat distCoefficients(distCoeffs);
 
-                cv::Mat newCameraMatrix = cv::getOptimalNewCameraMatrix(cameraMatrix, distCoefficients, cv::Size(width, height), alphaScalingFactor);
+                cv::Mat newCameraMatrix = cv::getOptimalNewCameraMatrix(
+                    cameraMatrix, distCoefficients, cv::Size(cameraData.width, cameraData.height), alphaScalingFactor);
                 // Copying the contents of newCameraMatrix to stereoIntrinsics
                 for(int i = 0; i < 3; i++) {
                     for(int j = 0; j < 3; j++) {

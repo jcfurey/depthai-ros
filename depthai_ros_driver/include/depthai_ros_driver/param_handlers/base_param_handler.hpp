@@ -1,4 +1,6 @@
 #pragma once
+#include <stdexcept>
+#include <string>
 #include "depthai/common/CameraBoardSocket.hpp"
 #include "depthai/pipeline/datatype/CameraControl.hpp"
 #include "depthai_bridge/depthaiUtility.hpp"
@@ -93,21 +95,11 @@ class BaseParamHandler {
     }
     template <typename T>
     T getParam(const std::string& paramName) {
-        T value;
-        if(!baseNode->has_parameter(getFullParamName(paramName))) {
-            RCLCPP_WARN(baseNode->get_logger(), "Parameter %s not found", getFullParamName(paramName).c_str());
-        }
-        baseNode->get_parameter<T>(getFullParamName(paramName), value);
-        return value;
+        return getDeclaredParam<T>(getFullParamName(paramName));
     }
     template <typename T>
     T getOtherNodeParam(const std::string& daiNodeName, const std::string& paramName) {
-        T value;
-        if(!baseNode->has_parameter(getFullParamName(daiNodeName, paramName))) {
-            RCLCPP_WARN(baseNode->get_logger(), "Parameter %s not found", getFullParamName(daiNodeName, paramName).c_str());
-        }
-        baseNode->get_parameter<T>(getFullParamName(daiNodeName, paramName), value);
-        return value;
+        return getDeclaredParam<T>(getFullParamName(daiNodeName, paramName));
     }
 
     std::string getFullParamName(const std::string& paramName) {
@@ -119,6 +111,16 @@ class BaseParamHandler {
     }
 
    protected:
+    // Reading an undeclared parameter is a programming or configuration error; never hand an
+    // uninitialized value to the SDK.
+    template <typename T>
+    T getDeclaredParam(const std::string& fullName) {
+        T value{};
+        if(!baseNode->get_parameter<T>(fullName, value)) {
+            throw std::invalid_argument("Parameter " + fullName + " is not declared");
+        }
+        return value;
+    }
     // On-set callbacks run before ROS commits the batch. Resolve companion
     // values from the complete pending update, independent of parameter order.
     template <typename T>

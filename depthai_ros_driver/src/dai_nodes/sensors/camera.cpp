@@ -37,22 +37,27 @@ void Camera::setNames() {
 std::shared_ptr<dai::node::Camera> Camera::getUnderlyingNode() {
     return camNode;
 }
-void Camera::setInOut(std::shared_ptr<dai::Pipeline> pipeline) {
+void Camera::requestDefaultOutput() {
     using ParamNames = param_handlers::ParamNames;
     auto width = ph->getParam<int>(ParamNames::WIDTH);
     auto height = ph->getParam<int>(ParamNames::HEIGHT);
     auto fps = ph->getParam<float>(ParamNames::FPS);
     dai::ImgFrame::Type type = dai::ImgFrame::Type::NV12;
+    if(ph->getParam<bool>("i_publish_full_resolution")) {
+        defaultOut = camNode->requestFullResolutionOutput(type, fps, ph->getParam<bool>("i_use_max_resolution_possible"));
+    } else {
+        defaultOut = camNode->requestOutput(std::pair<int, int>(width, height),
+                                            type,
+                                            utils::getValFromMap(ph->getParam<std::string>(ParamNames::RESIZE_MODE), sensor_helpers::resizeModeMap),
+                                            fps,
+                                            ph->getParam<bool>(ParamNames::UNDISTORTED));
+    }
+}
+
+void Camera::setInOut(std::shared_ptr<dai::Pipeline> pipeline) {
+    using ParamNames = param_handlers::ParamNames;
     if(ph->getParam<bool>(ParamNames::PUBLISH_TOPIC)) {
-        if(ph->getParam<bool>("i_publish_full_resolution")) {
-            defaultOut = camNode->requestFullResolutionOutput(type, fps, ph->getParam<bool>("i_use_max_resolution_possible"));
-        } else {
-            defaultOut = camNode->requestOutput(std::pair<int, int>(width, height),
-                                                type,
-                                                utils::getValFromMap(ph->getParam<std::string>(ParamNames::RESIZE_MODE), sensor_helpers::resizeModeMap),
-                                                fps,
-                                                ph->getParam<bool>(ParamNames::UNDISTORTED));
-        }
+        requestDefaultOutput();
         utils::VideoEncoderConfig encConfig;
         bool lowBandwidth = ph->getParam<bool>(ParamNames::LOW_BANDWIDTH);
         encConfig.profile = static_cast<dai::VideoEncoderProperties::Profile>(ph->getParam<int>(ParamNames::LOW_BANDWIDTH_PROFILE));
@@ -102,14 +107,17 @@ void Camera::closeQueues() {
 }
 
 void Camera::link(dai::Node::Input& in, int /* linkType */) {
-    if(ph->getParam<bool>("i_enable_default_output")) {
-        defaultOut->link(in);
-    } else {
-        throw std::runtime_error("Default output is disabled! Please reenable it via \"i_enable_default_out\" parameter");
-    }
+    getDefaultOut()->link(in);
 }
 
 dai::Node::Output* Camera::getDefaultOut() {
+    if(!ph->getParam<bool>("i_enable_default_output")) {
+        throw std::runtime_error("Default output of " + getName() + " is disabled; re-enable it via the i_enable_default_output parameter");
+    }
+    // Consumers such as RGBD alignment or feature tracking need the output even when it is not published.
+    if(defaultOut == nullptr) {
+        requestDefaultOutput();
+    }
     return defaultOut;
 }
 
