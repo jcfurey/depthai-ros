@@ -121,6 +121,8 @@ hardware batch was rolled back.
 
 ## Follow-up correctness fixes (2026-09-25)
 
+Remaining review findings are tracked in [OPEN_ISSUES.md](OPEN_ISSUES.md).
+
 * `sensor_msgs/Imu` always sets `orientation_covariance[0] = -1` when no orientation
   is available (rotation vector disabled, or not yet received). Interpolated IMU
   modes pair rotation and magnetometer reports by timestamp (latest at or before
